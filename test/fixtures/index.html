@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>网申表单模拟页</title>
+    <link rel="stylesheet" href="./dist/main.css" />
+    <style>
+      body {
+        font-family: system-ui, "PingFang SC", sans-serif;
+        max-width: 640px;
+        margin: 24px auto;
+      }
+      .section {
+        margin-bottom: 16px;
+      }
+      .field {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .field-label {
+        width: 160px;
+        flex: 0 0 160px;
+        text-align: right;
+        color: #333;
+      }
+      .date-range-control {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .date-range-sep {
+        color: #999;
+      }
+      .repeatable-entry {
+        border: 1px dashed #ddd;
+        padding: 12px;
+        margin-bottom: 12px;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./dist/main.js"></script>
+  </body>
+</html>
