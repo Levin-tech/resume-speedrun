@@ -4,7 +4,7 @@
  * matcher 识别出页面上的选项文案后，通过这里反查对应哪个标准值；
  * filler 要在页面上选中某个标准值时，也通过这里正向查出该网站的写法。
  *
- * 第 0 阶段仅占位结构和一两个示例，真实词表在适配具体网站时逐步补充。
+ * 第 0/1 阶段仅占位结构和常见示例，真实词表在适配具体网站时逐步补充。
  *
  * @typedef {Record<string, string[]>} SynonymMap 标准值 -> 该字段下各种可能出现的同义写法
  */
@@ -14,24 +14,73 @@ export const politicalStatusSynonyms = {
   共青团员: ["共青团员", "团员", "共青团"],
   中共党员: ["中共党员", "党员", "中共正式党员"],
   中共预备党员: ["中共预备党员", "预备党员"],
-  群众: ["群众", "无党派"],
-  民主党派: ["民主党派"],
+  群众: ["群众", "无党派", "无党派人士"],
+  民主党派: ["民主党派", "民主党派人士"],
 };
 
 /** @type {SynonymMap} */
 export const degreeSynonyms = {
   本科: ["本科", "学士", "本科/学士"],
-  硕士: ["硕士", "研究生", "硕士研究生"],
+  硕士: ["硕士", "研究生", "硕士研究生", "硕士/研究生"],
   博士: ["博士", "博士研究生"],
   专科: ["专科", "大专"],
 };
 
 /** @type {SynonymMap} */
+export const degreeModeSynonyms = {
+  全日制: ["全日制", "统招"],
+  非全日制: ["非全日制", "在职", "定向"],
+};
+
+/** @type {SynonymMap} */
 export const schoolTierSynonyms = {
-  "985": ["985", "985高校", "985工程"],
-  "211": ["211", "211高校", "211工程"],
-  双一流: ["双一流", "双一流高校"],
-  普通本科: ["普通本科", "普通院校"],
+  "985": ["985", "985高校", "985工程", "985院校"],
+  "211": ["211", "211高校", "211工程", "211院校"],
+  双一流: ["双一流", "双一流高校", "双一流院校"],
+  普通本科: ["普通本科", "普通院校", "普通高校"],
+  专科: ["专科", "大专院校"],
+  其他: ["其他", "海外院校", "境外院校"],
+};
+
+/** @type {SynonymMap} */
+export const genderSynonyms = {
+  男: ["男", "男性", "male"],
+  女: ["女", "女性", "female"],
+};
+
+/** @type {SynonymMap} */
+export const idTypeSynonyms = {
+  居民身份证: ["居民身份证", "身份证", "中国大陆居民身份证"],
+  港澳居民来往内地通行证: ["港澳居民来往内地通行证", "回乡证", "港澳通行证"],
+  台湾居民来往大陆通行证: ["台湾居民来往大陆通行证", "台胞证"],
+  护照: ["护照", "护照(境外)", "护照（境外）"],
+  其他: ["其他", "其它证件"],
+};
+
+/** @type {SynonymMap} */
+export const englishLevelSynonyms = {
+  "CET-4": ["CET-4", "四级", "英语四级", "大学英语四级"],
+  "CET-6": ["CET-6", "六级", "英语六级", "大学英语六级"],
+  "TEM-4": ["TEM-4", "专四", "英语专业四级"],
+  "TEM-8": ["TEM-8", "专八", "英语专业八级"],
+  IELTS: ["IELTS", "雅思"],
+  TOEFL: ["TOEFL", "托福"],
+  GRE: ["GRE"],
+  无: ["无", "未考", "暂无"],
+};
+
+/** @type {SynonymMap} */
+export const nationSynonyms = {
+  汉族: ["汉族", "汉"],
+  壮族: ["壮族", "壮"],
+  满族: ["满族", "满"],
+  回族: ["回族", "回"],
+  苗族: ["苗族", "苗"],
+  维吾尔族: ["维吾尔族", "维吾尔", "维族"],
+  土家族: ["土家族", "土家"],
+  彝族: ["彝族", "彝"],
+  蒙古族: ["蒙古族", "蒙古"],
+  藏族: ["藏族", "藏"],
 };
 
 /**
@@ -43,7 +92,31 @@ export function getSynonymMap(fieldName) {
   const registry = {
     politicalStatus: politicalStatusSynonyms,
     degree: degreeSynonyms,
+    degreeMode: degreeModeSynonyms,
     schoolTier: schoolTierSynonyms,
+    gender: genderSynonyms,
+    idType: idTypeSynonyms,
+    englishLevel: englishLevelSynonyms,
+    nation: nationSynonyms,
   };
   return registry[fieldName] ?? null;
+}
+
+/**
+ * 反查：给定字段名和网站上出现的实际文案，返回对应的标准值；
+ * 找不到时返回 null。
+ * @param {string} fieldName
+ * @param {string} rawText
+ * @returns {string|null}
+ */
+export function resolveStandardValue(fieldName, rawText) {
+  const map = getSynonymMap(fieldName);
+  if (!map || !rawText) return null;
+  const normalized = rawText.trim();
+  for (const [standardValue, variants] of Object.entries(map)) {
+    if (variants.some((v) => v === normalized)) {
+      return standardValue;
+    }
+  }
+  return null;
 }

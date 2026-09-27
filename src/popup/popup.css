@@ -14,3 +14,17 @@ h1 {
   color: #888;
   font-size: 12px;
 }
+
+button {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.status-text {
+  color: #52c41a;
+  font-size: 12px;
+  margin: 6px 0 0;
+}
