@@ -1,0 +1,16 @@
+body {
+  width: 280px;
+  font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+  margin: 0;
+  padding: 12px 16px;
+}
+
+h1 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.placeholder {
+  color: #888;
+  font-size: 12px;
+}

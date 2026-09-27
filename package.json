@@ -1,0 +1,23 @@
+{
+  "name": "resume-speedrun",
+  "version": "0.0.1",
+  "description": "简历速通：一键填写国内网申表单的浏览器插件（Chrome/Edge，Manifest V3）",
+  "private": true,
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "build:fixtures": "node scripts/build-fixtures.mjs",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "test": "npm run build && npm run build:fixtures && npm run test:unit && npm run test:e2e"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "ant-design-vue": "^4.2.6",
+    "esbuild": "^0.24.0",
+    "vitest": "^2.1.4",
+    "vue": "^3.5.12"
+  }
+}
