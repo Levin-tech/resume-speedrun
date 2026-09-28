@@ -77,6 +77,13 @@ describe("搜索关键词与级联路径", () => {
     expect(splitCascaderPath(["浙江省", "杭州市"])).toEqual(["浙江省", "杭州市"]);
   });
 
+  it("连着写的地址按省/市/区后缀拆开", () => {
+    expect(splitCascaderPath("湖北省武汉市洪山区")).toEqual(["湖北省", "武汉市", "洪山区"]);
+    expect(splitCascaderPath("新疆维吾尔自治区乌鲁木齐市")).toEqual(["新疆维吾尔自治区", "乌鲁木齐市"]);
+    expect(splitCascaderPath("深圳市")).toEqual(["深圳市"]);
+    expect(splitCascaderPath("北京海淀")).toEqual(["北京海淀"]);
+  });
+
   it("stripAdminSuffix 不会把两个字的地名删成一个字", () => {
     expect(stripAdminSuffix("广东省")).toBe("广东");
     expect(stripAdminSuffix("沙市")).toBe("沙市");

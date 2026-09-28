@@ -21,7 +21,9 @@ import {
   createEmptyResumeProfile,
   createEmptyEducationEntry,
   createEmptyInternshipEntry,
+  createEmptyWorkEntry,
   createEmptyProjectEntry,
+  migrateResumeProfile,
   parseImportedProfiles,
   buildExportPayload,
   createLocalId,
@@ -36,6 +38,7 @@ import {
   ENGLISH_LEVEL,
   NATION,
   INDUSTRY,
+  WORK_YEARS,
 } from "../shared/options-data/standard-values.js";
 
 const CollapsePanel = Collapse.Panel;
@@ -323,7 +326,8 @@ export default defineComponent({
     );
 
     async function load() {
-      const profiles = await getResumeProfiles();
+      // 本机存的可能是旧版本结构，读出来先升级到当前版本再编辑。
+      const profiles = (await getResumeProfiles()).map(migrateResumeProfile);
       const activeId = await getActiveProfileId();
       state.profiles =
         profiles.length > 0 ? profiles : [createEmptyResumeProfile(createLocalId())];
@@ -485,6 +489,7 @@ export default defineComponent({
             textField("籍贯", "nativePlace", b.nativePlace, (v) => (b.nativePlace = v)),
             textField("现居城市", "currentCity", b.currentCity, (v) => (b.currentCity = v)),
             textField("国家/地区", "country", b.country, (v) => (b.country = v)),
+            selectField("工作经验", "workYears", b.workYears, (v) => (b.workYears = v), WORK_YEARS),
           ]),
       });
     }
@@ -500,6 +505,8 @@ export default defineComponent({
             yearMonthField("到岗时间", "availableDate", ex.availableDate, (v) =>
               Object.assign(ex.availableDate, v)
             ),
+            textField("当前薪资", "currentSalary", ex.currentSalary, (v) => (ex.currentSalary = v)),
+            textField("期望薪资", "expectedSalary", ex.expectedSalary, (v) => (ex.expectedSalary = v)),
             repeatableTextList("期望城市", "cities", ex.cities, (v) => (ex.cities = v)),
           ]),
       });
@@ -572,21 +579,36 @@ export default defineComponent({
       );
     }
 
+    function jobEntryFields(prefix) {
+      return (entry, index) =>
+        h(Row, { gutter: [20, 12] }, () => [
+          textField("公司", `${prefix}-company-${index}`, entry.company, (v) => (entry.company = v)),
+          textField("职位", `${prefix}-title-${index}`, entry.title, (v) => (entry.title = v)),
+          textField("部门", `${prefix}-department-${index}`, entry.department, (v) => (entry.department = v)),
+          dateRangeField("起止时间", `${prefix}-${index}`, entry, (field, v) => (entry[field] = v)),
+          textAreaField("工作内容", `${prefix}-desc-${index}`, entry.description, (v) => (entry.description = v)),
+        ]);
+    }
+
     function renderInternshipPanel(profile) {
       return renderRepeatableSection(
-        "实习/工作经历",
+        "实习经历",
         "internship",
         profile.internships,
         createEmptyInternshipEntry,
         "internship",
-        (entry, index) =>
-          h(Row, { gutter: [20, 12] }, () => [
-            textField("公司", `intern-company-${index}`, entry.company, (v) => (entry.company = v)),
-            textField("职位", `intern-title-${index}`, entry.title, (v) => (entry.title = v)),
-            textField("部门", `intern-department-${index}`, entry.department, (v) => (entry.department = v)),
-            dateRangeField("起止时间", `intern-${index}`, entry, (field, v) => (entry[field] = v)),
-            textAreaField("工作内容", `intern-desc-${index}`, entry.description, (v) => (entry.description = v)),
-          ])
+        jobEntryFields("intern")
+      );
+    }
+
+    function renderWorkPanel(profile) {
+      return renderRepeatableSection(
+        "工作经历",
+        "work",
+        profile.workExperiences,
+        createEmptyWorkEntry,
+        "work",
+        jobEntryFields("work")
       );
     }
 
@@ -616,6 +638,8 @@ export default defineComponent({
             textAreaField("专业技能", "skills", s.skills, (v) => (s.skills = v)),
             repeatableTextList("证书", "certificates", s.certificates, (v) => (s.certificates = v)),
             repeatableTextList("获奖", "awards", s.awards, (v) => (s.awards = v)),
+            textAreaField("语言能力", "languageSkills", s.languageSkills, (v) => (s.languageSkills = v)),
+            textField("兴趣爱好", "hobbies", s.hobbies, (v) => (s.hobbies = v), 24),
             textAreaField("自我评价", "selfEvaluation", s.selfEvaluation, (v) => (s.selfEvaluation = v)),
           ]),
       });
@@ -642,6 +666,7 @@ export default defineComponent({
                       "expectation",
                       "education",
                       "internship",
+                      "work",
                       "project",
                       "skills",
                     ],
@@ -652,6 +677,7 @@ export default defineComponent({
                       renderExpectationPanel(profile),
                       renderEducationPanel(profile),
                       renderInternshipPanel(profile),
+                      renderWorkPanel(profile),
                       renderProjectPanel(profile),
                       renderSkillsPanel(profile),
                     ],

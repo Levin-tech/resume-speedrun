@@ -128,3 +128,51 @@ test("信息库页面：填写、刷新后还在、导出导入结果一致", as
     await context.close();
   }
 });
+
+test("信息库页面：旧版本（v1）数据能打开并升级，新字段（工作经历、薪资、兴趣爱好）能保存", async () => {
+  const { context, extensionId } = await launchWithExtension();
+
+  try {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/options/options.html`);
+    // 模拟升级前存下的第 1 版数据：没有工作经历、薪资、兴趣爱好这些字段。
+    await page.evaluate(() =>
+      chrome.storage.local.set({
+        resumeProfiles: [
+          {
+            id: "old-v1",
+            schemaVersion: 1,
+            name: "旧简历",
+            basic: { fullName: "王五" },
+            expectation: { cities: [] },
+            education: [],
+            internships: [{ company: "某实习公司", startDate: { year: 2024, month: 7 }, endDate: { year: 2024, month: 9 } }],
+            projects: [],
+            skills: {},
+          },
+        ],
+        activeProfileId: "old-v1",
+      })
+    );
+    await page.reload();
+    await page.waitForSelector('[data-testid="profile-select"]');
+    await expect(page.locator('[data-testid="input-fullName"]')).toHaveValue("王五");
+    await expect(page.locator('[data-testid="input-intern-company-0"]')).toHaveValue("某实习公司");
+
+    await page.fill('[data-testid="input-expectedSalary"]', "20-25K");
+    await page.fill('[data-testid="input-hobbies"]', "跑步、摄影");
+    await page.click('[data-testid="add-work-btn"]');
+    await page.fill('[data-testid="input-work-company-0"]', "速通科技");
+    await expect(page.locator('[data-testid="save-status"]')).toHaveText("已保存", { timeout: 5000 });
+
+    const [saved] = await page.evaluate(async () => (await chrome.storage.local.get("resumeProfiles")).resumeProfiles);
+    expect(saved.schemaVersion).toBe(2);
+    expect(saved.expectation.expectedSalary).toBe("20-25K");
+    expect(saved.skills.hobbies).toBe("跑步、摄影");
+    expect(saved.workExperiences).toHaveLength(1);
+    expect(saved.workExperiences[0].company).toBe("速通科技");
+    expect(saved.internships[0].company).toBe("某实习公司");
+  } finally {
+    await context.close();
+  }
+});

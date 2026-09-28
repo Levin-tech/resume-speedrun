@@ -147,8 +147,14 @@ export function searchKeywords(value) {
  */
 export function splitCascaderPath(value) {
   if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
-  return String(value ?? "")
+  const tokens = String(value ?? "")
     .split(/[/／>\s,，、-]+/)
     .map((v) => v.trim())
     .filter(Boolean);
+  // "湖北省武汉市洪山区" 这种连着写的，按"省/市/区"这些后缀拆开。
+  if (tokens.length === 1) {
+    const parts = tokens[0].match(/.+?(特别行政区|自治区|自治州|省|市|区|县|盟|旗)/g);
+    if (parts && parts.length > 1 && parts.join("") === tokens[0]) return parts;
+  }
+  return tokens;
 }

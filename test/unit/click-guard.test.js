@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { getClickBlockReason } from "../../src/content/filler/dom-actions.js";
+import { getClickBlockReason, safeClick, ClickBlockedError } from "../../src/content/filler/dom-actions.js";
 import { findAddEntryButton } from "../../src/content/filler/filler.js";
 
 function dom(html) {
@@ -30,6 +30,19 @@ describe("点击安全检查", () => {
     dom(`<button type="button" id="add">+ 添加教育经历</button><div role="option" id="opt">确认中</div>`);
     expect(getClickBlockReason(document.getElementById("add"))).toBeNull();
     expect(getClickBlockReason(document.getElementById("opt"))).toBeNull();
+  });
+
+  it("Moka 的“预览并提交”按钮被拦截，一次点击事件都不会发出去", async () => {
+    dom(`<button type="button" class="sd-Button-button-4Rt6y sd-Button-primary-8Uj2k" id="submit"><span>预览并提交</span></button>`);
+    const button = document.getElementById("submit");
+    const events = [];
+    for (const type of ["pointerdown", "mousedown", "mouseup", "click"]) {
+      button.addEventListener(type, () => events.push(type));
+    }
+    expect(getClickBlockReason(button.firstElementChild)).toMatch(/预览并提交.*提交.*插件不会点击/);
+    await expect(safeClick(button.firstElementChild)).rejects.toBeInstanceOf(ClickBlockedError);
+    await expect(safeClick(button, { focus: true })).rejects.toBeInstanceOf(ClickBlockedError);
+    expect(events).toEqual([]);
   });
 
   it("findAddEntryButton 跳过黑名单按钮", () => {

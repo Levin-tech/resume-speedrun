@@ -24,6 +24,35 @@ describe("getSynonymMap", () => {
   });
 });
 
+describe("Moka 实测选项", () => {
+  it("政治面貌：八个民主党派和无党派人士都有标准值，群众不再和无党派混在一起", () => {
+    const mokaOptions = [
+      "中共党员",
+      "中共预备党员",
+      "共青团员",
+      "民革党员",
+      "民盟盟员",
+      "民建会员",
+      "民进会员",
+      "农工党党员",
+      "致公党党员",
+      "九三学社社员",
+      "台盟盟员",
+      "无党派人士",
+      "群众",
+    ];
+    for (const option of mokaOptions) expect(resolveStandardValue("politicalStatus", option)).toBe(option);
+    expect(getSynonymMap("politicalStatus")["群众"]).not.toContain("无党派人士");
+  });
+
+  it("工作经验、行业、最高学历有同义词", () => {
+    expect(resolveStandardValue("workYears", "应届毕业生")).toBe("应届生");
+    expect(resolveStandardValue("currentIndustry", "互联网")).toBe("互联网/IT");
+    expect(resolveStandardValue("expectedIndustry", "医疗健康")).toBe("生物医药");
+    expect(resolveStandardValue("highestDegree", "硕士研究生")).toBe("硕士");
+  });
+});
+
 describe("resolveStandardValue", () => {
   it("能通过同义词反查出标准值", () => {
     expect(resolveStandardValue("politicalStatus", "团员")).toBe("共青团员");
