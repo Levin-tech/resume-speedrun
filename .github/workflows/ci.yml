@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 安装 Playwright 浏览器
+        run: npx playwright install --with-deps chromium
+
+      - name: 跑构建 + 单元测试 + 冒烟测试
+        run: npm test
+
+      - name: 打包 dist/ 为 zip
+        run: |
+          cd dist
+          zip -r ../resume-speedrun-dist.zip .
+
+      - name: 上传插件构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: resume-speedrun-dist
+          path: resume-speedrun-dist.zip
+          if-no-files-found: error

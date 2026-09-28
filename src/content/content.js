@@ -36,6 +36,12 @@ async function runAutoFill(profile) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "resume-speedrun:ping") {
+    // 供 popup 探测当前页面是否已经注入过 content script
+    // （自动注入的网站，或用户之前点过"在本页启用"）。
+    sendResponse({ ok: true });
+    return undefined;
+  }
   if (message?.type === "resume-speedrun:start-autofill") {
     runAutoFill(message.profile).then((summary) =>
       sendResponse({ ok: true, summary })
