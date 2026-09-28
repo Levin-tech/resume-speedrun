@@ -3,8 +3,6 @@
  * 输出成统一的 FormField 描述，交给 matcher 去识别每个字段对应简历哪一项。
  */
 
-let fieldCounter = 0;
-
 /**
  * @typedef {Object} FormField
  * @property {string} id 扫描器生成的临时 id
@@ -25,7 +23,6 @@ let fieldCounter = 0;
  * @returns {FormField[]}
  */
 export function scanFormFields(root = document) {
-  fieldCounter = 0;
   const fields = [];
 
   const roots = collectRoots(root);
@@ -33,6 +30,9 @@ export function scanFormFields(root = document) {
     fields.push(...scanRoot(r));
   }
 
+  fields.forEach((field, index) => {
+    field.id = `scan-${index + 1}`;
+  });
   return fields;
 }
 
@@ -56,16 +56,24 @@ function collectRoots(root) {
 
 function scanRoot(root) {
   const fields = [];
+  // 拆分式年月下拉组要先扫：组里的 4 个下拉归这个组所有，不再单独算作普通下拉。
+  const claimed = new Set();
 
+  scanDateRangeGroups(root, fields, claimed);
   scanNativeInputs(root, fields);
   scanNativeTextareas(root, fields);
-  scanNativeSelects(root, fields);
-  scanAntSelects(root, fields);
+  scanNativeSelects(root, fields, claimed);
+  scanAntSelects(root, fields, claimed);
   scanAntDatePickers(root, fields);
   scanAntCascaders(root, fields);
   scanAntRadioGroups(root, fields);
   scanAntCheckboxGroups(root, fields);
-  scanDateRangeGroups(root, fields);
+  scanCustomChoiceGroups(root, fields);
+
+  // 按页面上的先后顺序排列，填写时从上往下逐个处理。
+  fields.sort((a, b) =>
+    a.element.compareDocumentPosition(b.element) & a.element.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
+  );
 
   // Shadow DOM: scan open shadow roots
   scanShadowRoots(root, fields);
@@ -77,17 +85,13 @@ function scanShadowRoots(root, fields) {
   try {
     const allElements = root.querySelectorAll("*");
     for (const el of allElements) {
-      if (el.shadowRoot) {
+      if (el.shadowRoot && !el.hasAttribute("data-resume-speedrun-ui")) {
         fields.push(...scanRoot(el.shadowRoot));
       }
     }
   } catch {
     // skip
   }
-}
-
-function nextId() {
-  return `scan-${++fieldCounter}`;
 }
 
 function scanNativeInputs(root, fields) {
@@ -111,10 +115,11 @@ function scanNativeTextareas(root, fields) {
   }
 }
 
-function scanNativeSelects(root, fields) {
+function scanNativeSelects(root, fields, claimed) {
   const selects = root.querySelectorAll("select");
   for (const select of selects) {
     if (isHiddenOrInvisible(select)) continue;
+    if (claimed.has(select)) continue;
     const opts = Array.from(select.options)
       .map((o) => o.textContent.trim())
       .filter((t) => t && t !== "请选择");
@@ -122,10 +127,11 @@ function scanNativeSelects(root, fields) {
   }
 }
 
-function scanAntSelects(root, fields) {
+function scanAntSelects(root, fields, claimed) {
   const selectors = root.querySelectorAll(".ant-select");
   for (const wrapper of selectors) {
     if (isHiddenOrInvisible(wrapper)) continue;
+    if (claimed.has(wrapper)) continue;
     // Skip if it's inside a date picker or cascader
     if (wrapper.closest(".ant-picker") || wrapper.closest(".ant-cascader")) continue;
 
@@ -177,20 +183,51 @@ function scanAntCheckboxGroups(root, fields) {
 }
 
 /**
- * 识别拆分式"年/月—年/月"下拉组：相邻的 4 个年月下拉识别成一组，
- * 并关联"至今"勾选框。
+ * 自己画的单选/多选（不是组件库的 radio/checkbox），按无障碍属性识别：
+ * role="radiogroup" 里的 role="radio"，或 role="group" 里的 role="checkbox"。
  */
-function scanDateRangeGroups(root, fields) {
-  const dateRangeContainers = root.querySelectorAll(".date-range-control, .date-range");
-  for (const container of dateRangeContainers) {
+function scanCustomChoiceGroups(root, fields) {
+  const groups = root.querySelectorAll('[role="radiogroup"], [role="group"]');
+  for (const group of groups) {
+    if (isHiddenOrInvisible(group)) continue;
+    if (group.matches(".ant-radio-group, .ant-checkbox-group")) continue;
+    const isRadio = group.getAttribute("role") === "radiogroup";
+    const items = group.querySelectorAll(isRadio ? '[role="radio"]' : '[role="checkbox"]');
+    if (items.length === 0) continue;
+    const opts = Array.from(items)
+      .map((item) => item.textContent.trim())
+      .filter(Boolean);
+    fields.push(buildField(group, isRadio ? "radio" : "checkbox", root, { options: opts }));
+  }
+}
+
+const SELECT_LIKE = ".ant-select, select";
+const YEAR_MONTH_HINT = /年|月|year|month/i;
+const CURRENT_HINT = /至今|目前|在读|在职|现在/;
+
+/**
+ * 识别拆分式"年/月—年/月"下拉组：同一个表单项里 4 个年月下拉识别成一组，
+ * 并关联旁边的"至今"勾选框。有 date-range 类名的容器直接认；其他表单项
+ * 要求 4 个下拉的提示文字里带"年/月"。多层容器都满足时只认最里面那层。
+ */
+function scanDateRangeGroups(root, fields, claimed) {
+  const candidates = new Set(root.querySelectorAll(".date-range-control, .date-range"));
+  for (const item of root.querySelectorAll(".ant-form-item, .field")) candidates.add(item);
+
+  const innermostFirst = Array.from(candidates).sort((a, b) => getDepth(b) - getDepth(a));
+  for (const container of innermostFirst) {
     if (isHiddenOrInvisible(container)) continue;
 
-    // 查找容器内的 select 组件（可能是原生或 ant-select）
-    const selects = container.querySelectorAll(".ant-select, select");
-    if (selects.length < 4) continue;
+    const selects = Array.from(container.querySelectorAll(SELECT_LIKE)).filter(
+      (el) => !el.closest(".ant-picker, .ant-cascader") && !claimed.has(el)
+    );
+    if (selects.length !== 4) continue;
 
-    // 查找至今复选框
-    const checkbox = container.querySelector('.ant-checkbox-wrapper, input[type="checkbox"]');
+    const byClassName = container.matches(".date-range-control, .date-range");
+    if (!byClassName && !selects.every((el) => YEAR_MONTH_HINT.test(selectHintText(el)))) continue;
+
+    const isCurrent = findCurrentCheckbox(container);
+    for (const el of selects) claimed.add(el);
 
     fields.push(
       buildField(container, "date-range-group", root, {
@@ -200,11 +237,39 @@ function scanDateRangeGroups(root, fields) {
           startMonth: selects[1],
           endYear: selects[2],
           endMonth: selects[3],
-          isCurrent: checkbox || null,
+          isCurrent,
         },
       })
     );
   }
+}
+
+function selectHintText(el) {
+  if (el.tagName === "SELECT") {
+    return Array.from(el.options)
+      .slice(0, 3)
+      .map((o) => o.textContent)
+      .join(" ");
+  }
+  const text = el.querySelector(
+    ".ant-select-selection-placeholder, .ant-select-selection-item"
+  );
+  return text?.textContent || el.getAttribute("aria-label") || "";
+}
+
+/** 在年月下拉组里（或它外面一层）找文案是"至今/目前/在读"的勾选框。 */
+function findCurrentCheckbox(container) {
+  for (const scope of [container, container.parentElement]) {
+    if (!scope) continue;
+    const boxes = scope.querySelectorAll(
+      '.ant-checkbox-wrapper, label, [role="checkbox"], input[type="checkbox"]'
+    );
+    for (const box of boxes) {
+      const text = (box.textContent || box.closest("label")?.textContent || "").trim();
+      if (text && text.length <= 6 && CURRENT_HINT.test(text)) return box;
+    }
+  }
+  return null;
 }
 
 function buildField(element, controlType, root, extra = {}) {
@@ -214,7 +279,7 @@ function buildField(element, controlType, root, extra = {}) {
   const placeholder = extractPlaceholder(element);
 
   return {
-    id: nextId(),
+    id: "",
     controlType,
     label,
     element,
@@ -383,30 +448,6 @@ function isInsideAntComponent(el) {
     el.closest(".ant-cascader") ||
     el.closest(".ant-input-number")
   );
-}
-
-const SUBMIT_BLACKLIST = ["提交", "保存", "下一步", "确认", "投递", "删除", "移除", "确定投递"];
-
-/**
- * 在页面中定位某个重复区块的"添加/新增"按钮。
- * @param {HTMLElement} sectionContainer
- * @returns {HTMLElement|null}
- */
-export function findAddEntryButton(sectionContainer) {
-  if (!sectionContainer) return null;
-
-  const buttons = sectionContainer.querySelectorAll("button, .ant-btn");
-  const addPatterns = ["添加", "新增", "增加", "+ 添加", "+添加"];
-
-  for (const btn of buttons) {
-    const text = btn.textContent.trim();
-    const isAdd = addPatterns.some((p) => text.includes(p));
-    if (!isAdd) continue;
-    const isBlacklisted = SUBMIT_BLACKLIST.some((b) => text.includes(b));
-    if (isBlacklisted) continue;
-    return btn;
-  }
-  return null;
 }
 
 /**

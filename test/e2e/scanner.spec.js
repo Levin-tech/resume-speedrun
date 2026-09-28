@@ -137,6 +137,35 @@ test("scanner 识别测试页所有控件并正确匹配简历字段", async () 
     expect(companyField).toBeTruthy();
     expect(companyField.resumeField).toBe("internships[0].company");
 
+    // 拆分式"年/月—年/月"下拉组：每段经历识别成恰好一个组，4 个下拉 + "至今"都找到了
+    const dateGroups = fields.filter((f) => f.controlType === "date-range-group");
+    expect(dateGroups.map((f) => f.resumeField)).toEqual([
+      "education[0].dateRange",
+      "education[1].dateRange",
+      "internships[0].dateRange",
+    ]);
+    for (const group of dateGroups) {
+      expect(group.label).toBe("起止时间");
+      expect(group.parts).toEqual({
+        startYear: true,
+        startMonth: true,
+        endYear: true,
+        endMonth: true,
+        isCurrent: true,
+      });
+    }
+    // 组里的年/月下拉不再被当成单独的普通下拉重复识别
+    expect(
+      fields.filter((f) => f.controlType !== "date-range-group" && /起始|结束/.test(f.placeholder))
+    ).toHaveLength(0);
+    expect(fields.filter((f) => f.label === "起止时间")).toHaveLength(3);
+
+    // 自己画的"标签式"单选（role="radio"）也能识别
+    const degree1 = fields.find((f) => f.label === "学历" && f.sectionIndex === 1);
+    expect(degree1.controlType).toBe("radio");
+    expect(degree1.options).toEqual(["大专", "本科", "硕士研究生", "博士研究生"]);
+    expect(degree1.resumeField).toBe("education[1].degree");
+
     // 诊断报告不含任何输入值
     const reportStr = JSON.stringify(fields);
     expect(reportStr).not.toContain('"value"');

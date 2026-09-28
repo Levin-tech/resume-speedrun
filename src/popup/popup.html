@@ -8,8 +8,14 @@
   <body>
     <div id="app">
       <h1>简历速通</h1>
-      <p class="placeholder">第 2 阶段：扫描与规则识别已实现</p>
-      <button id="fill-btn" disabled>开始填写（待实现）</button>
+      <label class="profile-row" for="profile-select">
+        当前简历
+        <select id="profile-select" data-testid="profile-select"></select>
+      </label>
+      <button id="fill-btn" class="primary" data-testid="fill-btn" disabled>开始填写</button>
+      <button id="undo-btn" data-testid="undo-btn" hidden>撤销本次填写</button>
+      <p id="fill-summary" class="fill-summary" data-testid="fill-summary" hidden></p>
+      <p class="placeholder">填完不会自动提交，请在页面上检查后自己点提交。</p>
       <button id="enable-btn" data-testid="enable-btn" hidden>在本页启用</button>
       <hr />
       <div class="diag-section">
@@ -17,7 +23,7 @@
         <button id="clear-diag-btn" data-testid="clear-diag-btn" hidden>清除浮层</button>
         <button id="export-diag-btn" data-testid="export-diag-btn" hidden>导出诊断报告</button>
       </div>
-      <p id="status-text" class="status-text"></p>
+      <p id="status-text" class="status-text" data-testid="status-text"></p>
       <p id="diag-summary" class="diag-summary" hidden></p>
       <hr />
       <button id="open-options-btn" data-testid="open-options-btn">

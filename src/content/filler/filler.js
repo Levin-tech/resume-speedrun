@@ -2,101 +2,255 @@
  * 填写引擎：把识别结果实际写入页面控件，模拟真实的人工操作
  * （而不是直接改 DOM value，这样才能触发组件库自己的 change 校验）。
  *
- * 每种控件类型对应一个填写函数，统一特点：
- *   - 用真实的鼠标事件/键盘事件序列（mousedown/click、input、change）
- *   - 下拉/日期这类"点开浮层再点选项"的控件，点开后要等浮层渲染出来再点选项
- *   - 填完立刻回读控件当前值，校验是否与目标一致，返回结果供 review 清单使用
- *   - 同一时间只处理一个控件，等上一个的浮层关闭再开始下一个，避免浮层重叠
+ *   - 用真实的鼠标/键盘事件序列（见 dom-actions.js）
+ *   - 下拉/日期/级联这类控件：点开 -> 等浮层 -> 点选项 -> 等浮层关闭 -> 回读校验
+ *   - 严格串行：一个控件的浮层关闭后才处理下一个，避免浮层互相遮挡
+ *   - 每项返回 已填/需确认/未填 及原因，交给 review 清单
+ *   - 填写前记录每项原来的状态，支持"撤销本次填写"
  *
- * 绝不点击的按钮文案黑名单，见 SUBMIT_LIKE_BLACKLIST，任何"添加新一段经历"
- * 之外的按钮点击都要先检查不在这个黑名单里。
+ * 绝不点击的按钮文案黑名单见 SUBMIT_LIKE_BLACKLIST（定义在 dom-actions.js，
+ * 所有点击都经过那里的 safeClick 检查）。
  */
 
-/** 永远不允许 filler 自动点击的按钮文案关键词（避免误触发提交/删除）。 */
-export const SUBMIT_LIKE_BLACKLIST = [
-  "提交",
-  "保存",
-  "下一步",
-  "确认",
-  "投递",
-  "删除",
-  "移除",
-  "确定投递",
-];
+import {
+  SUBMIT_LIKE_BLACKLIST,
+  ClickBlockedError,
+  getClickBlockReason,
+  safeClick,
+  clickOutside,
+  isVisible,
+  waitFor,
+  waitForSettled,
+} from "./dom-actions.js";
+import { resolveResumeValue, isEmptyValue } from "./values.js";
+import { textControl } from "./controls/text.js";
+import { selectControl } from "./controls/select.js";
+import { dateControl } from "./controls/date.js";
+import { dateRangeControl } from "./controls/date-range.js";
+import { cascaderControl } from "./controls/cascader.js";
+import { choiceControl } from "./controls/choice.js";
+
+export { SUBMIT_LIKE_BLACKLIST };
 
 /**
  * @typedef {Object} FillResult
  * @property {string} fieldId
  * @property {'filled'|'needs-confirmation'|'skipped'|'failed'} status
- * @property {string} [reason]
+ * @property {string} [reason] 需确认/未填的原因（中文，直接展示给用户）
+ * @property {string} [filledText] 实际填进去的文字
+ * @property {string} label
+ * @property {string} sectionTitle
+ * @property {number} sectionIndex
+ * @property {boolean} repeatable 是否属于可重复的经历区块
+ * @property {boolean} required
+ * @property {string} controlType
+ * @property {string|null} resumeField
  */
 
 /**
- * 按照 matcher 给出的匹配结果，逐项调用对应控件类型的填写函数。
- * 必须逐项串行执行（不要 Promise.all 并发），避免多个下拉浮层同时打开。
+ * @typedef {Object} UndoEntry
+ * @property {import('../scanner/scanner.js').FormField} field
+ * @property {object} snapshot 填写前的状态
+ */
+
+const CONTROL_HANDLERS = {
+  text: textControl,
+  textarea: textControl,
+  select: selectControl,
+  "searchable-select": selectControl,
+  date: dateControl,
+  "date-range-group": dateRangeControl,
+  cascader: cascaderControl,
+  radio: choiceControl,
+  checkbox: choiceControl,
+};
+
+const OVERLAY_SELECTOR = ".ant-select-dropdown, .ant-picker-dropdown, .ant-cascader-dropdown";
+
+/** 保证页面上没有还开着的浮层，再开始下一个控件。 */
+async function ensureOverlaysClosed() {
+  const anyOpen = () => Array.from(document.querySelectorAll(OVERLAY_SELECTOR)).some(isVisible);
+  if (!anyOpen()) return;
+  await clickOutside();
+  await waitFor(() => !anyOpen(), { timeout: 2000 });
+}
+
+function describeField(field, match) {
+  return {
+    fieldId: field.id,
+    label: field.label,
+    sectionTitle: field.sectionTitle,
+    sectionIndex: field.sectionIndex,
+    repeatable: !!field.container,
+    required: field.required,
+    controlType: field.controlType,
+    resumeField: match?.resumeField ?? null,
+  };
+}
+
+/**
+ * 按照 matcher 给出的匹配结果，逐项填写。严格串行（不要 Promise.all）。
  * @param {import('../scanner/scanner.js').FormField[]} fields
  * @param {import('../matcher/matcher.js').MatchResult[]} matches
  * @param {import('../../shared/schema/resume.js').ResumeProfile} profile
+ * @param {{ journal?: UndoEntry[] }} [options] journal 用来收集撤销记录
  * @returns {Promise<FillResult[]>}
  */
-export async function fillFields(fields, matches, profile) {
-  void profile;
+export async function fillFields(fields, matches, profile, { journal = [] } = {}) {
   const results = [];
-  for (const match of matches) {
-    const field = fields.find((f) => f.id === match.fieldId);
-    if (!field || !match.resumeField) {
-      results.push({ fieldId: match.fieldId, status: "skipped" });
+  for (const field of fields) {
+    const match = matches.find((m) => m.fieldId === field.id);
+    const base = describeField(field, match);
+    const skip = (reason) => results.push({ ...base, status: "skipped", reason });
+
+    if (!match?.resumeField) {
+      skip("没认出这一项对应简历里的哪个字段，请手动填写");
       continue;
     }
-    // TODO(第 1 阶段): 按 field.controlType 分派到下面各个占位函数。
-    results.push({ fieldId: match.fieldId, status: "skipped" });
+    const { value, missingEntry } = resolveResumeValue(profile, match.resumeField);
+    if (missingEntry) {
+      skip(`简历里没有第 ${field.sectionIndex + 1} 段${field.sectionTitle || "经历"}`);
+      continue;
+    }
+    if (isEmptyValue(value)) {
+      skip("简历里这一项是空的");
+      continue;
+    }
+    const handler = CONTROL_HANDLERS[field.controlType];
+    if (!handler) {
+      skip("暂不支持这种控件，请手动填写");
+      continue;
+    }
+    if (!field.element.isConnected) {
+      results.push({ ...base, status: "failed", reason: "控件已经不在页面上了" });
+      continue;
+    }
+
+    journal.push({ field, snapshot: handler.snapshot(field) });
+    let outcome;
+    try {
+      outcome = await handler.fill(field, value, match.resumeField);
+    } catch (error) {
+      outcome = {
+        status: "failed",
+        reason: error instanceof ClickBlockedError ? error.message : `填写时出错：${error.message}`,
+      };
+    }
+    await ensureOverlaysClosed();
+    results.push({ ...base, ...outcome });
   }
   return results;
 }
 
-/** 文本框：聚焦、逐字符 input 事件、失焦触发校验。 */
-export async function fillTextInput(element, value) {
-  void element;
-  void value;
+/**
+ * 撤销：按填写的倒序，把每个控件还原成填写前的状态。
+ * @param {UndoEntry[]} journal
+ * @returns {Promise<Array<FillResult & { status: 'restored'|'unchanged'|'failed' }>>}
+ */
+export async function undoFill(journal) {
+  const results = [];
+  for (const { field, snapshot } of [...journal].reverse()) {
+    const base = describeField(field, null);
+    if (!field.element.isConnected) {
+      results.push({ ...base, status: "failed", reason: "控件已经不在页面上了" });
+      continue;
+    }
+    let outcome;
+    try {
+      outcome = await CONTROL_HANDLERS[field.controlType].restore(field, snapshot);
+    } catch (error) {
+      outcome = { status: "failed", reason: `还原时出错：${error.message}` };
+    }
+    await ensureOverlaysClosed();
+    results.push({ ...base, ...outcome });
+  }
+  return results.reverse();
 }
 
-/** 组件库下拉：点开触发器 -> 等浮层出现 -> 点选项 -> 等浮层关闭。 */
-export async function fillSelect(element, optionText) {
-  void element;
-  void optionText;
-}
+const ADD_BUTTON_WORDS = ["添加", "新增", "增加", "再加一"];
+const REPEATABLE_ARRAYS = { education: "教育经历", internships: "实习经历", projects: "项目经历" };
 
-/** 可搜索下拉：聚焦输入关键词 -> 等候选列表出现 -> 点选目标候选项。 */
-export async function fillSearchableSelect(element, queryText, optionText) {
-  void element;
-  void queryText;
-  void optionText;
-}
-
-/** 日期选择器（含"年/月—年/月"拆分下拉 + "至今"勾选框）。 */
-export async function fillDateRange(element, startDate, endDate, isCurrent) {
-  void element;
-  void startDate;
-  void endDate;
-  void isCurrent;
-}
-
-/** 城市级联选择器：逐级点开并选中。 */
-export async function fillCascader(element, pathTexts) {
-  void element;
-  void pathTexts;
-}
-
-/** 自定义单选/多选控件。 */
-export async function fillChoice(element, optionTexts) {
-  void element;
-  void optionTexts;
+/**
+ * 在重复区块里找"添加/新增"按钮，命中黑名单的按钮直接跳过。
+ * @param {Element|null} sectionContainer
+ * @returns {HTMLElement|null}
+ */
+export function findAddEntryButton(sectionContainer) {
+  if (!sectionContainer) return null;
+  const buttons = sectionContainer.querySelectorAll('button, .ant-btn, [role="button"]');
+  for (const button of buttons) {
+    const text = button.textContent.trim();
+    if (!ADD_BUTTON_WORDS.some((w) => text.includes(w))) continue;
+    if (getClickBlockReason(button)) continue;
+    return button;
+  }
+  return null;
 }
 
 /**
  * 点击某个重复区块内的"添加"按钮（教育经历/实习经历等新增一段）。
- * 调用前必须确认按钮文案不在 SUBMIT_LIKE_BLACKLIST 中。
+ * 点击前再检查一遍按钮不在 SUBMIT_LIKE_BLACKLIST 中。
  */
 export async function clickAddEntryButton(buttonElement) {
-  void buttonElement;
+  const text = buttonElement.textContent.trim();
+  if (!ADD_BUTTON_WORDS.some((w) => text.includes(w))) {
+    throw new ClickBlockedError(`按钮「${text}」不是"添加"类按钮，插件不会点击`);
+  }
+  await safeClick(buttonElement);
+}
+
+/**
+ * 简历有 N 段经历、页面只有 M 段时，点 N-M 次对应区块的"添加"按钮，
+ * 每次都等新的一段出现。调用方随后要重新扫描再填写。
+ * @returns {Promise<{ added: number, results: FillResult[] }>}
+ */
+export async function expandRepeatableSections(fields, matches, profile) {
+  let added = 0;
+  const results = [];
+  for (const [arrayName, title] of Object.entries(REPEATABLE_ARRAYS)) {
+    const sectionFields = fields.filter((f) =>
+      matches.find((m) => m.fieldId === f.id)?.resumeField?.startsWith(`${arrayName}[`)
+    );
+    const wanted = profile?.[arrayName]?.length ?? 0;
+    if (sectionFields.length === 0 || wanted === 0) continue;
+
+    const onPage = Math.max(...sectionFields.map((f) => f.sectionIndex)) + 1;
+    const container = sectionFields.find((f) => f.container)?.container ?? null;
+    const note = (reason) =>
+      results.push({
+        fieldId: `add-${arrayName}`,
+        label: `${title}（第 ${onPage + 1}~${wanted} 段）`,
+        sectionTitle: sectionFields[0].sectionTitle,
+        sectionIndex: onPage,
+        repeatable: false,
+        required: false,
+        controlType: "add-button",
+        resumeField: arrayName,
+        status: "skipped",
+        reason,
+      });
+
+    for (let count = onPage; count < wanted; count += 1) {
+      const button =
+        findAddEntryButton(container) || findAddEntryButton(container?.closest(".ant-card, section, fieldset"));
+      if (!button) {
+        note(`简历有 ${wanted} 段，页面只有 ${count} 段，没找到"添加"按钮，请手动添加后再填一次`);
+        break;
+      }
+      const before = container.children.length;
+      try {
+        await clickAddEntryButton(button);
+      } catch (error) {
+        note(error.message);
+        break;
+      }
+      if (!(await waitFor(() => container.children.length > before))) {
+        note(`点了"${button.textContent.trim()}"但没有出现新的一段`);
+        break;
+      }
+      await waitForSettled(container, { quietMs: 100, timeout: 1500 });
+      added += 1;
+    }
+  }
+  return { added, results };
 }

@@ -62,3 +62,9 @@
   color: #aaa;
   font-size: 10px;
 }
+
+.resume-speedrun-highlight {
+  outline: 3px solid #1677ff !important;
+  outline-offset: 2px;
+  transition: outline-color 0.3s;
+}

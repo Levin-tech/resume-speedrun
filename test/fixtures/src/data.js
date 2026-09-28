@@ -1,12 +1,9 @@
-// 测试页用的静态选项数据，来自 src/shared/options-data，
-// 保证以后适配填写引擎时用的字段名称和这里一致。
-export const POLITICAL_STATUS_OPTIONS = [
-  "中共党员",
-  "中共预备党员",
-  "共青团员",
-  "民主党派",
-  "群众",
-].map((label) => ({ label, value: label }));
+// 测试页用的静态选项数据。故意模仿真实网站的写法（比如政治面貌写“团员”
+// 而不是标准值“共青团员”、学历写“硕士研究生”），用来验证填写引擎
+// 通过 src/shared/options-data/synonyms.js 把标准值对应到网站文案。
+export const POLITICAL_STATUS_OPTIONS = ["党员", "预备党员", "团员", "民主党派", "群众"].map(
+  (label) => ({ label, value: label })
+);
 
 export const NATION_OPTIONS = ["汉族", "壮族", "满族", "回族", "维吾尔族", "苗族", "其他"].map(
   (label) => ({ label, value: label })
@@ -19,6 +16,7 @@ export const COUNTRY_OPTIONS = ["中国", "美国", "英国", "日本", "新加�
 export const SCHOOL_OPTIONS = [
   "清华大学",
   "北京大学",
+  "北京大学医学部",
   "复旦大学",
   "上海交通大学",
   "浙江大学",
@@ -32,6 +30,21 @@ export const MAJOR_OPTIONS = [
   "金融学",
   "市场营销",
 ].map((label) => ({ label, value: label }));
+
+export const DEGREE_OPTIONS = ["大专", "本科", "硕士研究生", "博士研究生"];
+
+export const EXPECTED_CITY_OPTIONS = [
+  { label: "北京", value: "bj" },
+  { label: "上海", value: "sh" },
+  { label: "深圳", value: "sz" },
+  { label: "杭州", value: "hz" },
+];
+
+export const HOBBY_OPTIONS = [
+  { label: "阅读", value: "reading" },
+  { label: "运动", value: "sports" },
+  { label: "音乐", value: "music" },
+];
 
 export const CITY_CASCADER_OPTIONS = [
   {
@@ -70,6 +83,7 @@ export const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
 export function createEmptyEducationEntry() {
   return {
     school: undefined,
+    degree: undefined,
     major: undefined,
     startYear: undefined,
     startMonth: undefined,

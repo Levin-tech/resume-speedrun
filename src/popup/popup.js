@@ -2,7 +2,11 @@
  * 弹窗脚本。
  */
 
-import { getResumeProfiles, getActiveProfileId } from "../shared/storage/storage.js";
+import {
+  getResumeProfiles,
+  getActiveProfileId,
+  setActiveProfileId,
+} from "../shared/storage/storage.js";
 
 const PING_MESSAGE = { type: "resume-speedrun:ping" };
 
@@ -40,11 +44,37 @@ async function enableOnCurrentTab(tab, statusText) {
 
 let lastDiagnostics = null;
 
+function renderProfileOptions(select, profiles, activeId) {
+  select.replaceChildren();
+  if (profiles.length === 0) {
+    select.append(new Option("还没有简历，先去信息库填写", ""));
+    select.disabled = true;
+    return;
+  }
+  for (const profile of profiles) {
+    select.append(new Option(profile.name || "未命名简历", profile.id, false, profile.id === activeId));
+  }
+}
+
+function describeFillSummary(summary) {
+  const lines = [
+    `已填 ${summary.filled} 项，需确认 ${summary.needsConfirmation} 项，未填 ${summary.skipped} 项。`,
+  ];
+  if (summary.missingRequired > 0) lines.push(`其中 ${summary.missingRequired} 个必填项没填上。`);
+  lines.push("检查清单已显示在页面右上角。");
+  return lines.join("");
+}
+
 async function init() {
   const profiles = await getResumeProfiles();
   const activeId = await getActiveProfileId();
-  void profiles;
-  void activeId;
+
+  const profileSelect = document.getElementById("profile-select");
+  const fillBtn = document.getElementById("fill-btn");
+  const undoBtn = document.getElementById("undo-btn");
+  const fillSummary = document.getElementById("fill-summary");
+  renderProfileOptions(profileSelect, profiles, activeId);
+  profileSelect.addEventListener("change", () => setActiveProfileId(profileSelect.value));
 
   const enableBtn = document.getElementById("enable-btn");
   const statusText = document.getElementById("status-text");
@@ -63,6 +93,49 @@ async function init() {
     scanDiagBtn.disabled = true;
     return;
   }
+
+  fillBtn.disabled = profiles.length === 0;
+  fillBtn.addEventListener("click", async () => {
+    const profile = profiles.find((p) => p.id === profileSelect.value);
+    if (!profile) return;
+    fillBtn.disabled = true;
+    undoBtn.hidden = true;
+    fillSummary.hidden = true;
+    statusText.textContent = "正在填写，请不要操作页面…";
+    try {
+      if (!(await isContentScriptInjected(tab.id))) await enableOnCurrentTab(tab, statusText);
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        type: "resume-speedrun:start-autofill",
+        profile,
+      });
+      if (response?.ok) {
+        statusText.textContent = "填写完成";
+        fillSummary.textContent = describeFillSummary(response.summary);
+        fillSummary.hidden = false;
+        undoBtn.hidden = false;
+      } else {
+        statusText.textContent = `填写失败：${response?.error ?? "未知错误"}`;
+      }
+    } catch (error) {
+      statusText.textContent = `填写出错：${error.message ?? error}`;
+    }
+    fillBtn.disabled = false;
+  });
+
+  undoBtn.addEventListener("click", async () => {
+    undoBtn.disabled = true;
+    statusText.textContent = "正在撤销…";
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, { type: "resume-speedrun:undo-fill" });
+      statusText.textContent = response?.ok
+        ? `已撤销：还原 ${response.restored} 项${response.failed ? `，${response.failed} 项需手动检查` : ""}`
+        : `撤销失败：${response?.error ?? "未知错误"}`;
+      if (response?.ok) undoBtn.hidden = true;
+    } catch (error) {
+      statusText.textContent = `撤销出错：${error.message ?? error}`;
+    }
+    undoBtn.disabled = false;
+  });
 
   const injected = await isContentScriptInjected(tab.id);
   if (injected) {
