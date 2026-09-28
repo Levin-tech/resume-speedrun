@@ -19,6 +19,9 @@ async function launchWithExtension() {
   const context = await chromium.launchPersistentContext("", {
     headless: true,
     executablePath,
+    // 默认的 headless 模式会用精简版 chromium-headless-shell，它不支持加载插件；
+    // 没有指定预装浏览器时（如 GitHub Actions），显式使用完整版 Chromium。
+    channel: executablePath ? undefined : "chromium",
     args: [
       "--headless=new",
       "--no-sandbox",

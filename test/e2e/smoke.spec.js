@@ -21,6 +21,9 @@ test("content script 已注入到测试页", async () => {
     // （Chromium 112+）已支持加载扩展，不需要额外的虚拟显示器。
     headless: true,
     executablePath,
+    // 默认的 headless 模式会用精简版 chromium-headless-shell，它不支持加载插件；
+    // 没有指定预装浏览器时（如 GitHub Actions），显式使用完整版 Chromium。
+    channel: executablePath ? undefined : "chromium",
     args: [
       "--headless=new",
       "--no-sandbox",
