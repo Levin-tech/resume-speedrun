@@ -8,15 +8,17 @@
   <body>
     <div id="app">
       <h1>简历速通</h1>
-      <p class="placeholder">第 1 阶段占位页面，后续实现：</p>
-      <ul>
-        <li>选择要使用的简历库</li>
-        <li>一键开始填写当前页面</li>
-        <li>查看投递记录 / 导出 Excel</li>
-      </ul>
+      <p class="placeholder">第 2 阶段：扫描与规则识别已实现</p>
       <button id="fill-btn" disabled>开始填写（待实现）</button>
       <button id="enable-btn" data-testid="enable-btn" hidden>在本页启用</button>
+      <hr />
+      <div class="diag-section">
+        <button id="scan-diag-btn" data-testid="scan-diag-btn">扫描诊断</button>
+        <button id="clear-diag-btn" data-testid="clear-diag-btn" hidden>清除浮层</button>
+        <button id="export-diag-btn" data-testid="export-diag-btn" hidden>导出诊断报告</button>
+      </div>
       <p id="status-text" class="status-text"></p>
+      <p id="diag-summary" class="diag-summary" hidden></p>
       <hr />
       <button id="open-options-btn" data-testid="open-options-btn">
         打开信息库

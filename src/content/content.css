@@ -1,4 +1,64 @@
-/* 检查清单悬浮面板样式占位，后续阶段实现具体 UI 时再补充。 */
 .resume-speedrun-review-panel {
   all: initial;
+}
+
+.resume-speedrun-diagnostic-overlay {
+  pointer-events: none;
+  font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  white-space: nowrap;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.resume-speedrun-diagnostic-overlay .diag-type {
+  padding: 0 4px;
+  border-radius: 2px;
+  background: #1677ff;
+  font-size: 10px;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-text {
+  color: #ddd;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-field {
+  padding: 0 4px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-field.diag-high {
+  background: #52c41a;
+  color: #fff;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-field.diag-medium {
+  background: #faad14;
+  color: #fff;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-field.diag-low {
+  background: #ff4d4f;
+  color: #fff;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-field.diag-none {
+  background: #666;
+  color: #ccc;
+}
+
+.resume-speedrun-diagnostic-overlay .diag-confidence {
+  color: #aaa;
+  font-size: 10px;
 }
