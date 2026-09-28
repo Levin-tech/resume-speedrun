@@ -35,6 +35,28 @@ async function launchWithExtension() {
   return { context, extensionId };
 }
 
+async function antSelect(page, testId, optionText) {
+  // Close any open dropdowns first
+  await page.evaluate(() => {
+    document.querySelectorAll(".ant-select-dropdown").forEach((dd) => {
+      dd.style.display = "none";
+    });
+  });
+  await page.waitForTimeout(100);
+
+  await page.click(`[data-testid="${testId}"] .ant-select-selector`);
+  await page.waitForSelector(`.ant-select-dropdown:not([style*="display: none"])`, {
+    state: "visible",
+    timeout: 5000,
+  });
+
+  // Click the last visible dropdown's matching option
+  await page.click(
+    `.ant-select-dropdown:not([style*="display: none"]) .ant-select-item-option[title="${optionText}"]`
+  );
+  await page.waitForTimeout(300);
+}
+
 test("信息库页面：填写、刷新后还在、导出导入结果一致", async () => {
   const { context, extensionId } = await launchWithExtension();
 
@@ -46,13 +68,13 @@ test("信息库页面：填写、刷新后还在、导出导入结果一致", as
 
     await page.fill('[data-testid="input-fullName"]', "张三");
     await page.fill('[data-testid="input-phone"]', "13800000000");
-    await page.selectOption('[data-testid="select-gender"]', "男");
+    await antSelect(page, "select-gender", "男");
 
     await page.click('[data-testid="add-education-btn"]');
     await page.waitForSelector('[data-testid="education-entry-0"]');
     await page.fill('[data-testid="input-edu-school-0"]', "速通大学");
-    await page.selectOption('[data-testid="select-edu-tier-0"]', "985");
-    await page.selectOption('[data-testid="select-edu-degree-0"]', "本科");
+    await antSelect(page, "select-edu-tier-0", "985");
+    await antSelect(page, "select-edu-degree-0", "本科");
 
     // 等自动保存完成（有 400ms 防抖）。
     await expect(page.locator('[data-testid="save-status"]')).toHaveText("已保存", {
@@ -64,9 +86,13 @@ test("信息库页面：填写、刷新后还在、导出导入结果一致", as
     await page.waitForSelector('[data-testid="profile-select"]');
     await expect(page.locator('[data-testid="input-fullName"]')).toHaveValue("张三");
     await expect(page.locator('[data-testid="input-phone"]')).toHaveValue("13800000000");
-    await expect(page.locator('[data-testid="select-gender"]')).toHaveValue("男");
+    await expect(
+      page.locator('[data-testid="select-gender"] .ant-select-selection-item')
+    ).toHaveText("男");
     await expect(page.locator('[data-testid="input-edu-school-0"]')).toHaveValue("速通大学");
-    await expect(page.locator('[data-testid="select-edu-tier-0"]')).toHaveValue("985");
+    await expect(
+      page.locator('[data-testid="select-edu-tier-0"] .ant-select-selection-item')
+    ).toHaveText("985");
 
     // 导出 JSON。
     const [download] = await Promise.all([

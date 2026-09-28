@@ -1,25 +1,13 @@
 /**
  * 内容脚本入口。
- *
- * 职责：
- *   1. 响应 popup 发来的"开始填写"消息，跑一遍
- *      scanner -> matcher -> filler -> review 的流程
- *   2. 监听页面上"提交"类按钮的点击（用户自己点的，不是插件点的），
- *      点击后把当前公司/岗位/网址等信息发给 background 记一条投递记录
- *
- * 第 0 阶段：只搭好入口和消息通道，流程内部都是占位实现。
  */
 
-import { scanFormFields } from "./scanner/scanner.js";
+import { scanFormFields, getElementDigest } from "./scanner/scanner.js";
 import { matchFields } from "./matcher/matcher.js";
 import { fillFields } from "./filler/filler.js";
 import { summarizeFillResults, renderReviewPanel } from "./review/review.js";
 import { detectAdapter } from "./adapters/index.js";
 
-// 供 Playwright 冒烟测试确认内容脚本已注入。
-// 注意：内容脚本运行在独立的 JS 世界（isolated world），设置
-// window.xxx 在页面自己的脚本/page.evaluate() 里是看不到的；
-// 但 DOM 是共享的，所以用一个 data-* 属性做标记。
 document.documentElement.setAttribute("data-resume-speedrun-injected", "true");
 
 async function runAutoFill(profile) {
@@ -35,10 +23,89 @@ async function runAutoFill(profile) {
   return summary;
 }
 
+async function runScanDiagnostics() {
+  const adapter = detectAdapter();
+  const fields = scanFormFields(document);
+  const matches = await matchFields(fields, {
+    platform: adapter.id,
+    useAi: false,
+  });
+
+  const diagnostics = fields.map((field) => {
+    const match = matches.find((m) => m.fieldId === field.id);
+    return {
+      id: field.id,
+      controlType: field.controlType,
+      label: field.label,
+      sectionTitle: field.sectionTitle,
+      sectionIndex: field.sectionIndex,
+      required: field.required,
+      options: field.options,
+      placeholder: field.placeholder,
+      resumeField: match?.resumeField || null,
+      matchedBy: match?.matchedBy || "none",
+      confidence: match?.confidence || 0,
+      element: getElementDigest(field.element),
+    };
+  });
+
+  return { platform: adapter.id, fieldCount: fields.length, fields: diagnostics };
+}
+
+function renderDiagnosticOverlays(diagnostics) {
+  removeDiagnosticOverlays();
+
+  const fields = scanFormFields(document);
+
+  for (const field of fields) {
+    const diag = diagnostics.fields.find((d) => d.id === field.id);
+    if (!diag) continue;
+
+    const overlay = document.createElement("div");
+    overlay.className = "resume-speedrun-diagnostic-overlay";
+    overlay.setAttribute("data-diagnostic-id", field.id);
+
+    const confidenceClass =
+      diag.confidence >= 0.8 ? "high" : diag.confidence >= 0.5 ? "medium" : "low";
+
+    overlay.innerHTML = `
+      <div class="diag-label">
+        <span class="diag-type">${diag.controlType}</span>
+        <span class="diag-text">${diag.label || "(无标签)"}</span>
+        ${diag.resumeField ? `<span class="diag-field diag-${confidenceClass}">${diag.resumeField}</span>` : '<span class="diag-field diag-none">未匹配</span>'}
+        ${diag.confidence > 0 ? `<span class="diag-confidence">${Math.round(diag.confidence * 100)}%</span>` : ""}
+      </div>
+    `;
+
+    const el = field.element;
+    const rect = el.getBoundingClientRect();
+    overlay.style.position = "absolute";
+    overlay.style.left = `${rect.left + window.scrollX}px`;
+    overlay.style.top = `${rect.top + window.scrollY - 24}px`;
+    overlay.style.zIndex = "999999";
+
+    document.body.appendChild(overlay);
+  }
+}
+
+function removeDiagnosticOverlays() {
+  const existing = document.querySelectorAll(".resume-speedrun-diagnostic-overlay");
+  for (const el of existing) el.remove();
+}
+
+window.addEventListener("message", (event) => {
+  if (event.data?.type === "resume-speedrun:scan-diagnostics-request") {
+    runScanDiagnostics().then((diagnostics) => {
+      window.postMessage(
+        { type: "resume-speedrun:scan-diagnostics-response", payload: { ok: true, diagnostics } },
+        "*"
+      );
+    });
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "resume-speedrun:ping") {
-    // 供 popup 探测当前页面是否已经注入过 content script
-    // （自动注入的网站，或用户之前点过"在本页启用"）。
     sendResponse({ ok: true });
     return undefined;
   }
@@ -46,7 +113,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     runAutoFill(message.profile).then((summary) =>
       sendResponse({ ok: true, summary })
     );
-    return true; // 异步响应
+    return true;
+  }
+  if (message?.type === "resume-speedrun:scan-diagnostics") {
+    runScanDiagnostics().then((diagnostics) => {
+      renderDiagnosticOverlays(diagnostics);
+      sendResponse({ ok: true, diagnostics });
+    });
+    return true;
+  }
+  if (message?.type === "resume-speedrun:clear-diagnostics") {
+    removeDiagnosticOverlays();
+    sendResponse({ ok: true });
+    return undefined;
   }
   return undefined;
 });

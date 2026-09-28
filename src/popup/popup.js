@@ -1,10 +1,5 @@
 /**
  * 弹窗脚本。
- *
- * 第 1 阶段实现："打开信息库"按钮 + 非自动注入网站的"在本页启用"按钮
- * （用 activeTab + chrome.scripting 按需注入 content script，不需要
- * 声明 <all_urls> host_permissions）。选择简历库/开始填写等交互留到
- * 后续阶段。
  */
 
 import { getResumeProfiles, getActiveProfileId } from "../shared/storage/storage.js";
@@ -43,17 +38,21 @@ async function enableOnCurrentTab(tab, statusText) {
   }
 }
 
+let lastDiagnostics = null;
+
 async function init() {
   const profiles = await getResumeProfiles();
   const activeId = await getActiveProfileId();
-  // TODO(第 2 阶段): 渲染简历库下拉、启用"开始填写"按钮、绑定点击事件
-  // 向当前标签页的 content script 发送 resume-speedrun:start-autofill 消息。
   void profiles;
   void activeId;
 
   const enableBtn = document.getElementById("enable-btn");
   const statusText = document.getElementById("status-text");
   const openOptionsBtn = document.getElementById("open-options-btn");
+  const scanDiagBtn = document.getElementById("scan-diag-btn");
+  const clearDiagBtn = document.getElementById("clear-diag-btn");
+  const exportDiagBtn = document.getElementById("export-diag-btn");
+  const diagSummary = document.getElementById("diag-summary");
 
   openOptionsBtn.addEventListener("click", () => {
     chrome.runtime.openOptionsPage();
@@ -61,24 +60,80 @@ async function init() {
 
   const tab = await getCurrentTab();
   if (!tab?.id || !tab.url || !/^https?:\/\//.test(tab.url)) {
+    scanDiagBtn.disabled = true;
     return;
   }
 
   const injected = await isContentScriptInjected(tab.id);
   if (injected) {
     statusText.textContent = "本页已启用";
-    return;
+  } else {
+    enableBtn.hidden = false;
+    enableBtn.addEventListener("click", async () => {
+      enableBtn.disabled = true;
+      const ok = await enableOnCurrentTab(tab, statusText);
+      if (ok) {
+        enableBtn.hidden = true;
+      } else {
+        enableBtn.disabled = false;
+      }
+    });
   }
 
-  enableBtn.hidden = false;
-  enableBtn.addEventListener("click", async () => {
-    enableBtn.disabled = true;
-    const ok = await enableOnCurrentTab(tab, statusText);
-    if (ok) {
-      enableBtn.hidden = true;
-    } else {
-      enableBtn.disabled = false;
+  scanDiagBtn.addEventListener("click", async () => {
+    scanDiagBtn.disabled = true;
+    statusText.textContent = "扫描中…";
+
+    // 先确保内容脚本已注入
+    if (!await isContentScriptInjected(tab.id)) {
+      await enableOnCurrentTab(tab, statusText);
     }
+
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, {
+        type: "resume-speedrun:scan-diagnostics",
+      });
+      if (response?.ok) {
+        lastDiagnostics = response.diagnostics;
+        const matched = response.diagnostics.fields.filter((f) => f.resumeField).length;
+        const total = response.diagnostics.fieldCount;
+        diagSummary.textContent = `识别到 ${total} 个控件，${matched} 个已匹配`;
+        diagSummary.hidden = false;
+        clearDiagBtn.hidden = false;
+        exportDiagBtn.hidden = false;
+        statusText.textContent = "浮层已显示在页面上";
+      } else {
+        statusText.textContent = "扫描失败";
+      }
+    } catch (error) {
+      statusText.textContent = `扫描出错：${error.message ?? error}`;
+    }
+    scanDiagBtn.disabled = false;
+  });
+
+  clearDiagBtn.addEventListener("click", async () => {
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: "resume-speedrun:clear-diagnostics" });
+      clearDiagBtn.hidden = true;
+      diagSummary.hidden = true;
+      statusText.textContent = "浮层已清除";
+    } catch {
+      // ignore
+    }
+  });
+
+  exportDiagBtn.addEventListener("click", () => {
+    if (!lastDiagnostics) return;
+    const blob = new Blob([JSON.stringify(lastDiagnostics, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `scan-diagnostics-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    statusText.textContent = "诊断报告已导出";
   });
 }
 

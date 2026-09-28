@@ -28,3 +28,20 @@ button {
   font-size: 12px;
   margin: 6px 0 0;
 }
+
+.diag-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diag-section button {
+  margin-top: 4px;
+}
+
+.diag-summary {
+  color: #1677ff;
+  font-size: 12px;
+  margin: 6px 0 0;
+  font-weight: 600;
+}
