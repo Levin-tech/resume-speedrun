@@ -4,14 +4,19 @@
 
 import { scanFormFields, getElementDigest } from "./scanner/scanner.js";
 import { matchFields, planSectionArrays, detectSectionFromTitle } from "./matcher/matcher.js";
-import { fillFields, expandRepeatableSections, undoFill } from "./filler/filler.js";
+import { fillFields, expandRepeatableSections, undoFill, rememberPluginValues } from "./filler/filler.js";
 import { summarizeFillResults, renderReviewPanel, removeReviewPanel } from "./review/review.js";
 import { detectAdapter } from "./adapters/index.js";
 import { migrateResumeProfile } from "../shared/schema/resume.js";
 
 document.documentElement.setAttribute("data-resume-speedrun-injected", "true");
 
-/** 最近一次填写：撤销记录、控件引用（点清单条目时滚动过去用）、清单面板。 */
+/** 平台上值得在清单底部提醒用户的事。 */
+const PLATFORM_NOTES = {
+  moka: "Moka 会自动保存草稿，撤销后如仍有残留可刷新页面检查",
+};
+
+/** 最近一次填写：撤销记录、插件添加的经历段、控件引用（点清单条目时滚动过去用）、清单面板。 */
 let lastFill = null;
 let busy = false;
 
@@ -36,7 +41,7 @@ async function scanAndMatch(profile) {
     useAi: false,
   });
   const sections = repeatable?.map((s) => ({ ...s, arrayName: sectionArrays[detectSectionFromTitle(s.title)] }));
-  return { adapter, fields, matches, sections: sections ?? null };
+  return { adapter, fields, matches, sections: sections ?? null, platform: adapter.id };
 }
 
 function locateField(fieldId) {
@@ -64,7 +69,7 @@ async function runAutoFill(rawProfile) {
     const profile = migrateResumeProfile(rawProfile);
     removeReviewPanel();
 
-    let { fields, matches, sections } = await scanAndMatch(profile);
+    let { fields, matches, sections, platform } = await scanAndMatch(profile);
     // 简历经历段数比页面多时，先点"添加"补齐区块，再重新扫描匹配。
     const expansion = await expandRepeatableSections(fields, matches, profile, sections);
     if (expansion.added > 0) ({ fields, matches } = await scanAndMatch(profile));
@@ -72,14 +77,22 @@ async function runAutoFill(rawProfile) {
     const journal = [];
     const results = await fillFields(fields, matches, profile, { journal });
     results.push(...expansion.results);
+    rememberPluginValues(expansion.addedEntries);
 
     const summary = summarizeFillResults(results);
     lastFill = {
       journal,
+      addedEntries: expansion.addedEntries,
+      // 没法记下是哪一段的（通用页面），撤销时只能留成空白。
+      untrackedAdded: expansion.added - expansion.addedEntries.length,
       elements: new Map(fields.map((f) => [f.id, f.element])),
       panel: null,
     };
-    lastFill.panel = renderReviewPanel(summary, { onUndo: runUndo, onLocate: locateField });
+    lastFill.panel = renderReviewPanel(summary, {
+      onUndo: runUndo,
+      onLocate: locateField,
+      footnote: PLATFORM_NOTES[platform] ?? "",
+    });
     return { ok: true, summary: toPopupSummary(summary) };
   } finally {
     busy = false;
@@ -91,9 +104,11 @@ async function runUndo() {
   if (busy) return { ok: false, error: "正在处理上一次操作，请稍候" };
   busy = true;
   try {
-    const results = await undoFill(lastFill.journal);
+    const results = await undoFill(lastFill.journal, lastFill.addedEntries);
+    lastFill.panel?.showUndoResults(results, { untrackedAdded: lastFill.untrackedAdded });
     lastFill.journal = [];
-    lastFill.panel?.showUndoResults(results);
+    lastFill.addedEntries = [];
+    lastFill.untrackedAdded = 0;
     return {
       ok: true,
       restored: results.filter((r) => r.status === "restored").length,

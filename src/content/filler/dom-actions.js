@@ -24,6 +24,22 @@ export const DEFAULT_TIMEOUT = 3000;
 const BUTTON_LIKE =
   'button, [role="button"], input[type="submit"], input[type="button"], input[type="image"], a[href]';
 
+/** 不是 button 的元素（如 Moka 的"删除本条"是个 span）文字里带这些词也不点。 */
+const DANGER_WORDS = ["提交", "删除", "移除", "投递"];
+const SHORT_TEXT = 12;
+
+function dangerWordNear(element) {
+  let node = element;
+  for (let depth = 0; node && node !== node.ownerDocument?.body && depth < 4; depth += 1) {
+    const text = (node.textContent || "").trim();
+    if (text.length > SHORT_TEXT) break;
+    const word = DANGER_WORDS.find((w) => text.includes(w));
+    if (word) return { text, word };
+    node = node.parentElement;
+  }
+  return null;
+}
+
 /**
  * 判断点击某个元素是否可能触发"提交/保存/删除"类操作。返回拒绝原因，
  * 允许点击时返回 null。
@@ -32,7 +48,10 @@ const BUTTON_LIKE =
  */
 export function getClickBlockReason(element) {
   const button = element.closest(BUTTON_LIKE);
-  if (!button) return null;
+  if (!button) {
+    const hit = dangerWordNear(element);
+    return hit ? `「${hit.text}」含有「${hit.word}」，插件不会点击` : null;
+  }
   const text = (
     button.textContent ||
     button.value ||
@@ -187,6 +206,11 @@ export function hover(element) {
 export async function safeClick(element, { focus = false } = {}) {
   const blocked = getClickBlockReason(element);
   if (blocked) throw new ClickBlockedError(blocked);
+  await dispatchClick(element, { focus });
+}
+
+// 不做黑名单检查的点击动作，只给 safeClick 和 clickDeleteOfAddedEntry 用，不导出。
+async function dispatchClick(element, { focus = false } = {}) {
   element.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   const point = eventPoint(element);
   hover(element);
@@ -200,6 +224,99 @@ export async function safeClick(element, { focus = false } = {}) {
   fireMouse(element, "mouseup", point);
   fireMouse(element, "click", point);
   await tick();
+}
+
+/**
+ * 显示出来的值。有的组件库（如 Moka 的下拉、地区）选中后 input.value 一直是空的，
+ * 选中的文字显示在同一个 label 里的 display-value 元素里，所以先看它，没有再看 value。
+ * @param {HTMLInputElement|HTMLTextAreaElement} input
+ */
+export function readShownText(input) {
+  const box = input.closest('label, [class*="sd-Input-container"]');
+  const display = box?.querySelector('[class*="display-value"]');
+  const text = display?.textContent.trim() ?? "";
+  if (text && !/placeholder/i.test(display.className) && text !== input.placeholder) return text;
+  return (input.value ?? "").trim();
+}
+
+/** 鼠标移开（悬停才出现的清空按钮等会收起来）。 */
+export function unhover(element) {
+  const point = eventPoint(element);
+  for (const type of ["pointerout", "pointerleave", "mouseout", "mouseleave"]) fireMouse(element, type, point);
+}
+
+// ---- 黑名单"删除"的唯一例外：删掉插件本次自己点"添加"加出来的那一段 ----
+
+/** "删除本条"这类只删一段的按钮文字（去掉图标、空白后比较）。 */
+export const DELETE_ENTRY_TEXT = /^删除(本条|此条|该条|这条|本段|此段)?$/;
+
+const buttonWords = (el) => (el.textContent || el.value || "").replace(/[^\p{Script=Han}A-Za-z]/gu, "");
+
+/**
+ * 一段经历里所有输入项现在显示的值（按页面顺序）；勾选框记成"✓"或空。
+ * @param {Element} entry
+ * @returns {string[]}
+ */
+export function readEntryValues(entry) {
+  return Array.from(entry.querySelectorAll("input, textarea, select"))
+    .filter((el) => !["hidden", "file", "button", "submit", "image"].includes(el.type))
+    .map((el) => {
+      if (el.type === "checkbox" || el.type === "radio") return el.checked ? "✓" : "";
+      if (el.tagName === "SELECT") return el.value;
+      return readShownText(el);
+    });
+}
+
+/**
+ * 这一段里的每一项要么是空的，要么正好是插件填完时的值（pluginValues 是填完那一刻
+ * 的 readEntryValues）。有任何一项是用户自己填/改的，就返回 false。
+ */
+export function hasOnlyPluginContent(entry, pluginValues = []) {
+  const now = readEntryValues(entry);
+  const sameShape = now.length === pluginValues.length;
+  return now.every((value, i) => !value || (sameShape && value === pluginValues[i]));
+}
+
+/**
+ * @typedef {Object} AddedEntryRecord 插件本次点"添加"加出来的一段
+ * @property {Element} entry 这一段的容器
+ * @property {string[]} [pluginValues] 插件填完时这一段的 readEntryValues
+ */
+
+/**
+ * 能不能点这个"删除本条"。只有同时满足这几条才允许，返回拒绝原因或 null：
+ * 这一段在本次添加记录里、还在页面上、按钮在这一段里面且文字就是"删除本条"、
+ * 不是表单提交按钮、段里只有空值或插件填的值。
+ * @param {Element} button
+ * @param {Element} entry
+ * @param {AddedEntryRecord[]} addedEntries 本次填写时插件添加的段
+ * @returns {string|null}
+ */
+export function getDeleteEntryBlockReason(button, entry, addedEntries) {
+  const record = (addedEntries ?? []).find((r) => r.entry === entry);
+  if (!record) return "这一段不是插件本次添加的，插件不会删除";
+  if (!entry.isConnected) return "这一段已经不在页面上了";
+  if (!button || button === entry || !entry.contains(button)) return "删除按钮不在这一段里，插件不会点击";
+  const words = buttonWords(button);
+  if (!DELETE_ENTRY_TEXT.test(words)) return `按钮「${words}」不是“删除本条”，插件不会点击`;
+  const asButton = button.closest("button, input");
+  if (asButton && (asButton.type === "submit" || asButton.type === "image") && asButton.form) {
+    return "这个按钮会提交表单，插件不会点击";
+  }
+  if (!hasOnlyPluginContent(entry, record.pluginValues)) {
+    return "这一段里有不是插件填的内容，插件不会删除";
+  }
+  return null;
+}
+
+/**
+ * 点插件本次添加的那一段里的"删除本条"。这是 SUBMIT_LIKE_BLACKLIST 里"删除"的唯一
+ * 例外，只在撤销时用；每次点之前都用 getDeleteEntryBlockReason 重新检查一遍。
+ */
+export async function clickDeleteOfAddedEntry(button, entry, addedEntries) {
+  const blocked = getDeleteEntryBlockReason(button, entry, addedEntries);
+  if (blocked) throw new ClickBlockedError(blocked);
+  await dispatchClick(button);
 }
 
 /** 在页面空白处按下鼠标，相当于"点一下别处"关闭浮层。 */

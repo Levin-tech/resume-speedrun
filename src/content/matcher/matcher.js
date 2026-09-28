@@ -17,8 +17,9 @@
  */
 
 /**
- * 区块类型 -> 简历里的经历数组。见 planSectionArrays。
- * @typedef {Record<'education'|'internship'|'work'|'project', string>} SectionArrays
+ * 区块类型 -> 简历里的经历数组。见 planSectionArrays。获奖经历在简历里是字符串
+ * 列表（skills.awards），按段取值见 values.js 的 entriesOf。
+ * @typedef {Record<'education'|'internship'|'work'|'project'|'award', string>} SectionArrays
  */
 
 export const DEFAULT_SECTION_ARRAYS = {
@@ -26,6 +27,7 @@ export const DEFAULT_SECTION_ARRAYS = {
   internship: "internships",
   work: "workExperiences",
   project: "projects",
+  award: "awards",
 };
 
 /**
@@ -87,11 +89,37 @@ function tryAdapterMatch(field, adapterRules) {
 }
 
 /** 网申页上常见、但简历信息库里故意没有的项：直接标"信息库无此项"，不去乱猜。 */
-const NO_RESUME_FIELD = ["推荐码", "内推码", "推荐人", "汇报对象", "下属人数", "离职原因", "简历更新时间"];
+const NO_RESUME_FIELD = [
+  "推荐码",
+  "内推码",
+  "推荐人",
+  "汇报对象",
+  "下属人数",
+  "离职原因",
+  "简历更新时间",
+  "公司规模",
+  "企业规模",
+  "公司性质",
+  "企业性质",
+  "单位性质",
+  "公司类型",
+  "获奖时间",
+  "获奖日期",
+];
+
+/**
+ * 在经历区块里才算"信息库无此项"的：经历里的"所在行业"问的是那家公司的行业，
+ * 不能拿求职意向里的行业去填。
+ */
+const NO_RESUME_FIELD_IN_SECTION = ["行业"];
 
 function tryUnavailableMatch(field) {
   const label = field.label || "";
-  if (!NO_RESUME_FIELD.some((word) => label.includes(word))) return null;
+  const inSection = !!detectSectionFromTitle(field.sectionTitle) && !/意向|期望/.test(field.sectionTitle);
+  const unavailable =
+    NO_RESUME_FIELD.some((word) => label.includes(word)) ||
+    (inSection && NO_RESUME_FIELD_IN_SECTION.some((word) => label.includes(word)));
+  if (!unavailable) return null;
   return { fieldId: field.id, resumeField: null, matchedBy: "keyword", confidence: 1, unavailable: true };
 }
 
@@ -104,6 +132,7 @@ function tryUnavailableMatch(field) {
  * - isArrayField: 是否属于可重复经历的子字段
  * - sectionOnly: 数组字段只在对应区块里才算（区块外的同名标签交给别的规则）
  * - topLevelOnly: 只在经历区块外才算（如个人信息里的"毕业时间"）
+ * - firstEntryOnly: 可重复区块里只填第 1 段（如语言能力：信息库里只有英语一种）
  */
 const WORK_SECTIONS = ["internship", "work"];
 
@@ -129,6 +158,9 @@ const KEYWORD_RULES = [
   { keywords: ["毕业时间", "毕业年月", "毕业日期"], excludeKeywords: [], field: "derived.graduationDate", section: null, topLevelOnly: true },
   { keywords: ["目前职位", "当前职位", "现任职位"], excludeKeywords: [], field: "derived.currentTitle", section: null },
   { keywords: ["语言能力", "外语能力", "语言水平"], excludeKeywords: [], field: "derived.languageAbility", section: null },
+  { keywords: ["语言类型", "语种", "外语语种", "语言种类"], excludeKeywords: [], field: "derived.languageType", section: null, firstEntryOnly: true },
+  { keywords: ["听说能力", "听说"], excludeKeywords: [], field: "derived.languageListenSpeak", section: null, firstEntryOnly: true },
+  { keywords: ["读写能力", "读写"], excludeKeywords: [], field: "derived.languageReadWrite", section: null, firstEntryOnly: true },
 
   // 求职意向
   { keywords: ["期望岗位", "意向岗位", "意向职位", "期望职位"], excludeKeywords: [], field: "expectation.position", section: null },
@@ -155,17 +187,20 @@ const KEYWORD_RULES = [
   { keywords: ["公司", "公司名称", "企业名称", "单位名称"], excludeKeywords: ["学校"], field: "company", section: WORK_SECTIONS, isArrayField: true },
   { keywords: ["职位", "职位名称", "岗位名称"], excludeKeywords: ["期望"], field: "title", section: WORK_SECTIONS, isArrayField: true },
   { keywords: ["部门"], excludeKeywords: [], field: "department", section: WORK_SECTIONS, isArrayField: true },
-  { keywords: ["工作内容", "工作描述", "职责描述", "实习描述", "实习内容"], excludeKeywords: [], field: "description", section: WORK_SECTIONS, isArrayField: true },
+  { keywords: ["工作内容", "工作描述", "职责描述", "实习描述", "实习内容", "工作职责", "岗位职责", "实习职责", "职责"], excludeKeywords: [], field: "description", section: WORK_SECTIONS, isArrayField: true },
 
-  // 项目经历
+  // 项目经历：只写"职责"的是担任角色，"项目中职责"这种是一段描述
   { keywords: ["项目名称", "项目名"], excludeKeywords: [], field: "name", section: "project", isArrayField: true },
-  { keywords: ["担任角色", "项目角色", "角色"], excludeKeywords: [], field: "role", section: "project", isArrayField: true },
-  { keywords: ["项目描述", "项目内容"], excludeKeywords: [], field: "description", section: "project", isArrayField: true },
+  { keywords: ["担任角色", "项目角色", "角色", "职责"], excludeKeywords: [], field: "role", section: "project", isArrayField: true },
+  { keywords: ["项目描述", "项目内容", "项目中职责", "项目职责", "职责描述"], excludeKeywords: [], field: "description", section: "project", isArrayField: true },
+
+  // 获奖经历：页面上一段一个奖项
+  { keywords: ["奖项名称", "获奖名称", "荣誉名称", "奖项"], excludeKeywords: ["时间", "日期", "级别", "等级"], field: "name", section: "award", isArrayField: true, sectionOnly: true },
 
   // 技能与其他
   { keywords: ["英语", "英语等级", "外语等级"], excludeKeywords: [], field: "skills.englishLevel", section: null },
   { keywords: ["专业技能", "技能"], excludeKeywords: ["英语"], field: "skills.skills", section: null },
-  { keywords: ["获奖经历", "获奖情况", "获奖", "荣誉奖项"], excludeKeywords: [], field: "skills.awards", section: null },
+  { keywords: ["获奖经历", "获奖情况", "获奖", "荣誉奖项", "奖项名称"], excludeKeywords: ["时间", "日期", "级别", "等级"], field: "skills.awards", section: null },
   { keywords: ["兴趣爱好", "爱好", "特长爱好"], excludeKeywords: [], field: "skills.hobbies", section: null },
   { keywords: ["自我评价", "自我介绍", "个人总结", "自我描述"], excludeKeywords: [], field: "skills.selfEvaluation", section: null },
 ];
@@ -199,6 +234,7 @@ function tryKeywordMatch(field, sectionArrays = DEFAULT_SECTION_ARRAYS) {
     }
     const ruleSections = [].concat(rule.section ?? []);
     if (rule.topLevelOnly && sectionHint) continue;
+    if (rule.firstEntryOnly && field.sectionIndex > 0) continue;
     if (rule.sectionOnly && !ruleSections.includes(sectionHint)) continue;
 
     // 关键词匹配评分
@@ -268,7 +304,7 @@ function matchDateRangeGroup(field, sectionArrays) {
 /**
  * 从区块标题推断这段经历属于哪一类。"实习/工作经历"这种混写的算实习。
  * @param {string} title
- * @returns {'education'|'internship'|'work'|'project'|null}
+ * @returns {'education'|'internship'|'work'|'project'|'award'|null}
  */
 export function detectSectionFromTitle(title) {
   if (!title) return null;
@@ -276,6 +312,7 @@ export function detectSectionFromTitle(title) {
   if (/实习/.test(title)) return "internship";
   if (/工作|职业|就业/.test(title)) return "work";
   if (/项目/.test(title)) return "project";
+  if (/获奖|奖项|荣誉/.test(title)) return "award";
   return null;
 }
 

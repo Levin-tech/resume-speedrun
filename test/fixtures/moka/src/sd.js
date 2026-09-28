@@ -1,6 +1,8 @@
 // 仿 Moka 自研组件库（sd- 前缀）。按 2026-09 在 app.mokahr.com 实测的 DOM 结构复刻：
 // 类名带 CSS Modules 式的随机哈希后缀（每次打开页面都不一样），下拉类控件
 // 只响应 mousedown（只 click 打不开），浮层渲染在字段内部，点外面关闭。
+// 下拉、地区选中后 input.value 保持为空，选中的文字显示在同一个 label 里的
+// sd-Input-display-value 元素里（2026-09 真实页面上确认）。
 // 真实页面的细节以 docs/platforms/moka.md 为准，这里只是尽量贴近的仿真。
 import { defineComponent, h, ref, computed, onMounted, onBeforeUnmount } from "vue";
 
@@ -45,13 +47,20 @@ function clearIcon(onClear) {
   );
 }
 
-function menu(items, onPick, selected) {
+/** 选中的文字：真实 Moka 不写进 input.value，而是显示在 input 旁边的这个元素里。 */
+function displayValue(text) {
+  return text ? h("span", { class: cx("sd-Input-display-value") }, text) : null;
+}
+
+function menu(items, onPick, selected, { loading = false, emptyText = "暂无数据" } = {}) {
   return h("div", { class: cx("sd-Dropdown-container") }, [
     h("div", { class: cx("sd-Dropdown-dropdown") }, [
       h(
         "div",
         { class: cx("sd-Select-menu") },
-        items.length
+        loading
+          ? [h("div", { class: cx("sd-Select-loading") }, "搜索中…")]
+          : items.length
           ? items.map((item) =>
               h(
                 "div",
@@ -63,7 +72,7 @@ function menu(items, onPick, selected) {
                 [h("span", { class: "option-label" }, item.label)]
               )
             )
-          : [h("div", { class: cx("sd-Select-empty") }, "暂无数据")]
+          : [h("div", { class: cx("sd-Select-empty") }, emptyText)]
       ),
     ]),
   ]);
@@ -103,8 +112,10 @@ export const SdTextarea = defineComponent({
 });
 
 /**
- * 下拉。filterable 的输入框可以打字过滤（Moka 的"年"就是这样）。
- * 鼠标移到输入框上时出现清空按钮。
+ * 下拉。filterable 的输入框可以打字过滤（Moka 的"年"就是这样）；remote 的是
+ * 可搜索下拉（意向工作城市）：不输入不给选项，输入后隔一会儿才出联想结果。
+ * 选中后 input.value 为空，选中的文字在 sd-Input-display-value 里。
+ * clearable 的鼠标移到输入框上时出现清空按钮；不 clearable 的选中后就清不掉了。
  */
 export const SdSelect = defineComponent({
   props: {
@@ -112,6 +123,8 @@ export const SdSelect = defineComponent({
     options: Array,
     placeholder: { type: String, default: "请选择" },
     filterable: Boolean,
+    remote: Boolean,
+    clearable: { type: Boolean, default: true },
     disabled: Boolean,
     width: String,
   },
@@ -121,25 +134,50 @@ export const SdSelect = defineComponent({
     const open = ref(false);
     const hovering = ref(false);
     const query = ref("");
+    const loading = ref(false);
+    const remoteResults = ref([]);
+    let timer = null;
+    onBeforeUnmount(() => clearTimeout(timer));
+    const searchable = computed(() => props.filterable || props.remote);
     const selected = computed(() => props.options.find((o) => o.value === props.value)?.label ?? "");
-    const visibleOptions = computed(() =>
-      props.filterable && query.value ? props.options.filter((o) => o.label.includes(query.value)) : props.options
-    );
+    const visibleOptions = computed(() => {
+      if (props.remote) return remoteResults.value;
+      return props.filterable && query.value ? props.options.filter((o) => o.label.includes(query.value)) : props.options;
+    });
     const close = () => {
       open.value = false;
       query.value = "";
+      loading.value = false;
+      remoteResults.value = [];
+      clearTimeout(timer);
     };
     useOutsideClose(root, () => open.value, close);
 
     const onMousedown = () => {
       if (props.disabled) return;
-      if (open.value && !props.filterable) close();
+      if (open.value && !searchable.value) close();
       else open.value = true;
+    };
+    const onInput = (event) => {
+      query.value = event.target.value;
+      open.value = true;
+      if (!props.remote) return;
+      // 模拟向服务器要联想结果：先显示"搜索中"，隔一会儿才出结果。
+      clearTimeout(timer);
+      remoteResults.value = [];
+      loading.value = !!query.value.trim();
+      if (!loading.value) return;
+      const text = query.value.trim();
+      timer = setTimeout(() => {
+        remoteResults.value = props.options.filter((o) => o.label.includes(text));
+        loading.value = false;
+      }, 250);
     };
     const pick = (option) => {
       emit("update:value", option.value);
       close();
     };
+    const typing = computed(() => open.value && searchable.value && !!query.value);
 
     return () =>
       h("div", { class: cx("sd-Select-wrapper"), ref: root, style: props.width ? { width: props.width } : null }, [
@@ -153,19 +191,25 @@ export const SdSelect = defineComponent({
           [
             h("input", {
               class: cx("sd-Input-input"),
-              readonly: !props.filterable,
+              readonly: !searchable.value,
               disabled: props.disabled,
-              value: open.value && props.filterable ? query.value : selected.value,
-              placeholder: open.value && props.filterable && selected.value ? selected.value : props.placeholder,
+              value: typing.value ? query.value : "",
+              placeholder: selected.value ? "" : props.placeholder,
               onMousedown,
-              onInput: (event) => (query.value = event.target.value),
+              onInput,
             }),
-            hovering.value && selected.value && !props.disabled
+            typing.value ? null : displayValue(selected.value),
+            props.clearable && hovering.value && selected.value && !props.disabled
               ? clearIcon(() => emit("update:value", null))
               : h("span", { class: cx("sd-Select-arrow") }, "▾"),
           ]
         ),
-        open.value ? menu(visibleOptions.value, pick, selected.value) : null,
+        open.value
+          ? menu(visibleOptions.value, pick, selected.value, {
+              loading: loading.value,
+              emptyText: props.remote && !query.value.trim() ? "请输入关键词搜索" : "暂无数据",
+            })
+          : null,
       ]);
   },
 });
@@ -235,7 +279,7 @@ export const SdCheckbox = defineComponent({
 });
 
 /** 只读输入框 + 点开的面板，出生日期和籍贯共用这个外壳。 */
-function panelShell({ root, open, hovering, value, placeholder, onToggle, onClear }, panel) {
+function panelShell({ root, open, hovering, value, placeholder, onToggle, onClear, useDisplayValue = false }, panel) {
   return h("div", { class: cx("sd-Picker-wrapper"), ref: root }, [
     h(
       "label",
@@ -248,10 +292,11 @@ function panelShell({ root, open, hovering, value, placeholder, onToggle, onClea
         h("input", {
           class: cx("sd-Input-input"),
           readonly: true,
-          value,
-          placeholder,
+          value: useDisplayValue ? "" : value,
+          placeholder: useDisplayValue && value ? "" : placeholder,
           onMousedown: onToggle,
         }),
+        useDisplayValue ? displayValue(value) : null,
         hovering.value && value ? clearIcon(onClear) : null,
       ]
     ),
@@ -262,7 +307,13 @@ function panelShell({ root, open, hovering, value, placeholder, onToggle, onClea
 const MONTH_NAMES = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
 const pad = (n) => String(n).padStart(2, "0");
 
-/** 出生日期：顶部年份选择（点开是年份列表），下面点月份（一月…十二月），再点日。 */
+const YEAR_PAGE_SIZE = 12;
+
+/**
+ * 出生日期：顶部"‹ 1990年 ›"，点年份弹出年份列表。年份列表一页只有 12 年，
+ * 默认停在 1990 年那一页，目标年份不在这一页时要点 ‹ › 翻页（真实页面实测如此）。
+ * 不在年份列表时 ‹ › 是上一年/下一年。选好年份后点月份（一月…十二月），再点日。
+ */
 export const SdDayPicker = defineComponent({
   props: { value: String, minYear: Number, maxYear: Number },
   emits: ["update:value"],
@@ -273,8 +324,10 @@ export const SdDayPicker = defineComponent({
     const year = ref(1990);
     const month = ref(null);
     const yearListOpen = ref(false);
+    const pageStart = ref(0);
     useOutsideClose(root, () => open.value, () => (open.value = false));
 
+    const pageOf = (y) => props.minYear + Math.floor((y - props.minYear) / YEAR_PAGE_SIZE) * YEAR_PAGE_SIZE;
     const toggle = () => {
       if (!open.value) {
         year.value = props.value ? Number(props.value.slice(0, 4)) : 1990;
@@ -283,20 +336,38 @@ export const SdDayPicker = defineComponent({
       }
       open.value = !open.value;
     };
+    const step = (direction) => {
+      if (yearListOpen.value) {
+        const next = pageStart.value + direction * YEAR_PAGE_SIZE;
+        if (next + YEAR_PAGE_SIZE > props.minYear && next <= props.maxYear) pageStart.value = next;
+      } else {
+        year.value = Math.min(props.maxYear, Math.max(props.minYear, year.value + direction));
+      }
+    };
 
     const panel = () => {
-      const years = [];
-      for (let y = props.maxYear; y >= props.minYear; y -= 1) years.push(y);
       const header = h("div", { class: cx("sd-basic-selector") }, [
+        h("span", { class: cx("sd-basic-arrow-prev"), onClick: () => step(-1) }, "‹"),
         h(
           "span",
-          { class: cx("sd-basic-selector-year"), onClick: () => (yearListOpen.value = !yearListOpen.value) },
+          {
+            class: cx("sd-basic-selector-year"),
+            onClick: () => {
+              yearListOpen.value = !yearListOpen.value;
+              pageStart.value = pageOf(year.value);
+            },
+          },
           `${year.value}年`
         ),
         month.value ? h("span", { class: cx("sd-basic-selector-month") }, MONTH_NAMES[month.value - 1]) : null,
+        h("span", { class: cx("sd-basic-arrow-next"), onClick: () => step(1) }, "›"),
       ]);
       let body;
       if (yearListOpen.value) {
+        const years = [];
+        for (let y = pageStart.value; y < pageStart.value + YEAR_PAGE_SIZE; y += 1) {
+          if (y >= props.minYear && y <= props.maxYear) years.push(y);
+        }
         body = h(
           "div",
           { class: cx("sd-basic-selector-year-list") },
@@ -367,7 +438,8 @@ const LEVEL_TABS = ["省份", "城市", "县区"];
 
 /**
  * 地区（籍贯/所在地）：只读输入框，mousedown 打开 menu-wrapper 面板，有"热门地区"
- * 标签（sd-Tag）和"省份/城市/县区"三个页签，逐级点选；每选一级就写回输入框。
+ * 标签（sd-Tag）和"省份/城市/县区"三个页签，逐级点选；每选一级就写回。和下拉一样，
+ * 选中的地区显示在 sd-Input-display-value 里，input.value 一直是空的。
  */
 export const SdLocation = defineComponent({
   props: { value: Array, regions: Array, hot: Array },
@@ -466,6 +538,7 @@ export const SdLocation = defineComponent({
           placeholder: "请选择",
           onToggle: toggle,
           onClear: () => emit("update:value", []),
+          useDisplayValue: true,
         },
         panel
       );

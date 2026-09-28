@@ -9,7 +9,8 @@
  *   - 填写前记录每项原来的状态，支持"撤销本次填写"
  *
  * 绝不点击的按钮文案黑名单见 SUBMIT_LIKE_BLACKLIST（定义在 dom-actions.js，
- * 所有点击都经过那里的 safeClick 检查）。
+ * 所有点击都经过那里的 safeClick 检查）。唯一的例外是撤销时删掉插件本次自己
+ * 添加的空白经历段（clickDeleteOfAddedEntry，点之前有单独的一套检查）。
  */
 
 import {
@@ -18,11 +19,15 @@ import {
   getClickBlockReason,
   safeClick,
   clickOutside,
+  clickDeleteOfAddedEntry,
+  hasOnlyPluginContent,
+  readEntryValues,
   isVisible,
   waitFor,
   waitForSettled,
 } from "./dom-actions.js";
-import { resolveResumeValue, isEmptyValue } from "./values.js";
+import { resolveResumeValue, isEmptyValue, entriesOf } from "./values.js";
+import { needsConfirmation, failed } from "./controls/results.js";
 import { textControl } from "./controls/text.js";
 import { selectControl } from "./controls/select.js";
 import { dateControl } from "./controls/date.js";
@@ -144,7 +149,7 @@ export async function fillFields(fields, matches, profile, { journal = [] } = {}
       skip("没认出这一项对应简历里的哪个字段，请手动填写");
       continue;
     }
-    const { value, missingEntry } = resolveResumeValue(profile, match.resumeField);
+    const { value, missingEntry, note } = resolveResumeValue(profile, match.resumeField);
     if (missingEntry) {
       skip(`简历里没有第 ${field.sectionIndex + 1} 段${field.sectionTitle || "经历"}`);
       continue;
@@ -174,34 +179,111 @@ export async function fillFields(fields, matches, profile, { journal = [] } = {}
       };
     }
     await ensureOverlaysClosed();
+    if (note && outcome.status === "filled") outcome = needsConfirmation(outcome.filledText, note);
     results.push({ ...base, ...outcome });
   }
   return results;
 }
 
 /**
- * 撤销：按填写的倒序，把每个控件还原成填写前的状态。
+ * 插件本次点"添加"加出来的一段（expandRepeatableSections 返回）。填完后调用方要
+ * 把这一段当时的值记到 pluginValues 里（见 rememberPluginValues），撤销时据此判断
+ * 这一段有没有被用户改过。
+ * @typedef {Object} AddedEntry
+ * @property {Element} entry
+ * @property {string} arrayName
+ * @property {string} title 区块标题
+ * @property {number} index 第几段（从 0 开始）
+ * @property {() => number} countEntries
+ * @property {((entry: Element) => Element|null)|null} findDeleteButton
+ * @property {string[]} [pluginValues]
+ */
+
+/** 填完之后记下每个新增段里插件填进去的值。 */
+export function rememberPluginValues(addedEntries) {
+  for (const record of addedEntries) record.pluginValues = readEntryValues(record.entry);
+}
+
+function describeAddedEntry(record) {
+  return {
+    fieldId: `added-${record.arrayName}-${record.index}`,
+    label: "整段（插件本次添加）",
+    sectionTitle: record.title,
+    sectionIndex: record.index,
+    repeatable: true,
+    required: false,
+    controlType: "added-entry",
+    resumeField: record.arrayName,
+  };
+}
+
+/** 点这一段的"删除本条"并等它从页面上消失。 */
+async function deleteAddedEntry(record, addedEntries) {
+  const button = record.findDeleteButton?.(record.entry);
+  if (!button) return failed("这一段里没找到“删除本条”，已清空，请手动删除这一段");
+  const before = record.countEntries();
+  try {
+    await clickDeleteOfAddedEntry(button, record.entry, addedEntries);
+  } catch (error) {
+    return failed(error instanceof ClickBlockedError ? error.message : `删除时出错：${error.message}`);
+  }
+  const gone = await waitFor(() => !record.entry.isConnected || record.countEntries() < before, { timeout: 2000 });
+  if (!gone) return failed("点了“删除本条”但这一段还在（页面如果弹出了确认框，请你自己确认）");
+  return { status: "restored", reason: "", filledText: "已删除" };
+}
+
+async function restoreOne({ field, snapshot }) {
+  const base = describeField(field, null);
+  if (!field.element.isConnected) return { ...base, status: "failed", reason: "控件已经不在页面上了" };
+  let outcome;
+  try {
+    outcome = await handlerFor(field).restore(field, snapshot);
+  } catch (error) {
+    outcome = { status: "failed", reason: `还原时出错：${error.message}` };
+  }
+  await ensureOverlaysClosed();
+  return { ...base, ...outcome };
+}
+
+/**
+ * 撤销：按填写的倒序，把每个控件还原成填写前的状态。插件本次添加的经历段：
+ * 里面只有空值或插件填的值，就直接点"删除本条"删掉（删不掉再逐项清空）；
+ * 用户改过里面的内容，就整段不动，在清单里请用户自己检查。
  * @param {UndoEntry[]} journal
+ * @param {AddedEntry[]} [addedEntries]
  * @returns {Promise<Array<FillResult & { status: 'restored'|'unchanged'|'failed' }>>}
  */
-export async function undoFill(journal) {
+export async function undoFill(journal, addedEntries = []) {
+  const live = addedEntries.filter((r) => r.entry.isConnected);
+  const deletable = live.filter((r) => hasOnlyPluginContent(r.entry, r.pluginValues));
+  const touched = live.filter((r) => !deletable.includes(r));
+  const ownerOf = (records, item) => records.find((r) => r.entry.contains(item.field.element));
+
   const results = [];
-  for (const { field, snapshot } of [...journal].reverse()) {
-    const base = describeField(field, null);
-    if (!field.element.isConnected) {
-      results.push({ ...base, status: "failed", reason: "控件已经不在页面上了" });
-      continue;
-    }
-    let outcome;
-    try {
-      outcome = await handlerFor(field).restore(field, snapshot);
-    } catch (error) {
-      outcome = { status: "failed", reason: `还原时出错：${error.message}` };
-    }
-    await ensureOverlaysClosed();
-    results.push({ ...base, ...outcome });
+  const deferred = new Map(deletable.map((r) => [r, []]));
+  for (const item of [...journal].reverse()) {
+    const owner = ownerOf(deletable, item);
+    if (owner) deferred.get(owner).push(item);
+    else if (!ownerOf(touched, item)) results.push(await restoreOne(item));
   }
-  return results.reverse();
+  results.reverse();
+
+  // 后加的先删，前面段的 DOM 不会被挪动。
+  for (const record of [...deletable].reverse()) {
+    const outcome = await deleteAddedEntry(record, addedEntries);
+    if (outcome.status !== "restored") {
+      for (const item of deferred.get(record)) results.push(await restoreOne(item));
+    }
+    results.push({ ...describeAddedEntry(record), ...outcome });
+  }
+  for (const record of touched) {
+    results.push({
+      ...describeAddedEntry(record),
+      status: "failed",
+      reason: "这一段是插件本次添加的，但填写后里面的内容被改动过，插件没有删除也没有还原，请手动检查",
+    });
+  }
+  return results;
 }
 
 const ADD_BUTTON_WORDS = ["添加", "新增", "增加", "再加一"];
@@ -210,6 +292,7 @@ const REPEATABLE_ARRAYS = {
   workExperiences: "工作经历",
   internships: "实习经历",
   projects: "项目经历",
+  awards: "获奖经历",
 };
 
 /**
@@ -250,6 +333,8 @@ export async function clickAddEntryButton(buttonElement) {
  * @property {Element|null} container
  * @property {() => number} countEntries 页面上现在有几段
  * @property {() => HTMLElement|null} findAddButton
+ * @property {() => Element[]} [listEntries] 每一段的容器（能给出时，撤销会删掉插件加的段）
+ * @property {(entry: Element) => Element|null} [findDeleteButton] 这一段的"删除本条"
  */
 
 /** @returns {RepeatableSection[]} */
@@ -279,16 +364,17 @@ function inferSections(fields, matches) {
  * 简历有 N 段经历、页面只有 M 段时，点 N-M 次对应区块的"添加"按钮，
  * 每次都等新的一段出现。调用方随后要重新扫描再填写。
  * @param {RepeatableSection[]|null} [sections] 平台适配器给出的区块；不给就从扫描结果推断
- * @returns {Promise<{ added: number, results: FillResult[] }>}
+ * @returns {Promise<{ added: number, addedEntries: AddedEntry[], results: FillResult[] }>}
  */
 export async function expandRepeatableSections(fields, matches, profile, sections = null) {
   let added = 0;
+  const addedEntries = [];
   const results = [];
   const done = new Set();
   for (const section of sections ?? inferSections(fields, matches)) {
     const { arrayName } = section;
     const title = REPEATABLE_ARRAYS[arrayName];
-    const wanted = profile?.[arrayName]?.length ?? 0;
+    const wanted = entriesOf(profile, arrayName).length;
     if (!title || done.has(arrayName) || wanted === 0) continue;
     done.add(arrayName);
 
@@ -313,6 +399,7 @@ export async function expandRepeatableSections(fields, matches, profile, section
         note(`简历有 ${wanted} 段，页面只有 ${count} 段，没找到"添加"按钮，请手动添加后再填一次`);
         break;
       }
+      const existing = section.listEntries?.() ?? [];
       try {
         await clickAddEntryButton(button);
       } catch (error) {
@@ -325,7 +412,18 @@ export async function expandRepeatableSections(fields, matches, profile, section
       }
       await waitForSettled(section.container, { quietMs: 100, timeout: 1500 });
       added += 1;
+      const entry = section.listEntries?.().find((el) => !existing.includes(el));
+      if (entry) {
+        addedEntries.push({
+          entry,
+          arrayName,
+          title: section.title,
+          index: count,
+          countEntries: section.countEntries,
+          findDeleteButton: section.findDeleteButton ?? null,
+        });
+      }
     }
   }
-  return { added, results };
+  return { added, addedEntries, results };
 }

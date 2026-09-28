@@ -30,6 +30,8 @@ const SKIP_REASONS = {
   unknown: "暂不支持这种控件，请手动填写",
 };
 
+import { DELETE_ENTRY_TEXT } from "../filler/dom-actions.js";
+
 const SELECT_INPUT = '[class*="sd-Select-container"] input';
 const OVERLAY = '[class*="sd-Dropdown-container"], [class*="sd-Dropdown-dropdown"], [class*="menu-wrapper"]';
 const ADD_WORDS = /添加|新增/;
@@ -67,6 +69,16 @@ function findAddButton(block) {
     (el) => ADD_WORDS.test(el.textContent) && el.textContent.trim().length <= 12
   );
   return hits.find((el) => !hits.some((other) => other !== el && el.contains(other))) ?? null;
+}
+
+/** 一段经历里文字是"删除本条"的最里层元素（不在任何字段里面）。 */
+function findDeleteButton(group) {
+  const words = (el) => el.textContent.replace(/[^\p{Script=Han}A-Za-z]/gu, "");
+  const hits = Array.from(group.querySelectorAll("*")).filter(
+    (el) => DELETE_ENTRY_TEXT.test(words(el)) && !el.closest('[class*="apply-field"]:not([class*="apply-fields"])')
+  );
+  return hits.find((el) => !hits.some((other) => other !== el && el.contains(other) && words(other) === words(el)))
+    ?? null;
 }
 
 function blockTitle(block, addButton) {
@@ -219,7 +231,7 @@ export const mokaAdapter = {
 
   /**
    * 带"添加"按钮的区块（包括一段都还没有、只有标题和"添加"的区块），
-   * 给 filler 按简历段数补齐用。
+   * 给 filler 按简历段数补齐用；撤销时用 findDeleteButton 找每段的"删除本条"。
    * @param {ParentNode} root
    */
   getRepeatableSections(root) {
@@ -229,7 +241,9 @@ export const mokaAdapter = {
         title,
         container: block,
         countEntries: () => findByClassBase(block, "apply-fields").length,
+        listEntries: () => findByClassBase(block, "apply-fields"),
         findAddButton: () => findAddButton(block),
+        findDeleteButton,
       }));
   },
 };
