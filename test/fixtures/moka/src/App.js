@@ -27,7 +27,7 @@ import {
 } from "./data.js";
 
 function field({ type, label, required = false, fullWidth = false, id }, content) {
-  return h("div", { class: [cx("apply-field"), type, fullWidth && "full-width-field"], "data-fixture": id }, [
+  return h("div", { class: [cx("apply-field"), cx(type), fullWidth && "full-width-field"], "data-fixture": id }, [
     h("div", { class: cx("field-title") }, [required ? h("span", { class: cx("required-asterisk") }, "*") : null, label]),
     h("div", { class: cx("field-content") }, [content]),
   ]);

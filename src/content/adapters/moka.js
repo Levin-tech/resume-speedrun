@@ -86,9 +86,11 @@ function fieldLabel(fieldEl) {
   return clone.textContent.replace(/[*＊:：]/g, "").trim();
 }
 
+// 真实页面上类型类名同样带 CSS Modules 哈希后缀（如 string_info-UOJxKN5mtC、Select-oqOV0aGogs）。
 function fieldType(fieldEl) {
-  const token = Object.keys(FIELD_TYPES).find((t) => fieldEl.classList.contains(t));
-  return token ? FIELD_TYPES[token] : "unknown";
+  const classes = Array.from(fieldEl.classList);
+  const type = Object.keys(FIELD_TYPES).find((t) => classes.some((c) => c === t || c.startsWith(`${t}-`)));
+  return type ? FIELD_TYPES[type] : "unknown";
 }
 
 const visibleInputs = (root, selector) => Array.from(root.querySelectorAll(selector)).filter((el) => !isHidden(el));

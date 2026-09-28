@@ -22,7 +22,7 @@ test("Moka 仿真页本身：类名带随机哈希，下拉只响应 mousedown",
       el.className,
       el.querySelector("input").className,
     ]);
-    expect(classes[0]).toMatch(/^apply-field-\w+ Select$/);
+    expect(classes[0]).toMatch(/^apply-field-\w+ Select-\w+$/);
     expect(classes[1]).toMatch(/^sd-Input-input-\w+$/);
 
     // 只派发 click 打不开；按实测顺序 pointerdown -> mousedown -> focus -> mouseup -> click 才打开。
