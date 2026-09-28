@@ -15,6 +15,7 @@ import { valueToText } from "../values.js";
 import { filled, needsConfirmation, failed, restored, unchanged } from "./results.js";
 
 function inputOf(field) {
+  if (field.subElements?.input) return field.subElements.input;
   const el = field.element;
   return el.matches("input, textarea") ? el : el.querySelector("input, textarea");
 }
@@ -38,7 +39,7 @@ export const textControl = {
     const input = inputOf(field);
     if (!input) return failed("没找到输入框");
     if (input.disabled || input.readOnly) return failed("输入框是只读的，没法输入");
-    const text = valueToText(value);
+    const text = Array.isArray(value) && input.tagName === "TEXTAREA" ? value.join("\n") : valueToText(value);
     await typeValue(input, text);
     if (input.value === text) return filled(text);
     if (input.value && text.startsWith(input.value)) {

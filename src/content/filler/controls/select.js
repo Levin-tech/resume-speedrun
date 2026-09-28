@@ -247,10 +247,6 @@ function isSearchable(el) {
   return el.classList.contains("ant-select-show-search");
 }
 
-export function snapshotSelect(el) {
-  return { text: readSelectText(el) };
-}
-
 export async function restoreSelect(el, snapshot) {
   if (normalizeText(readSelectText(el)) === normalizeText(snapshot.text)) return unchanged();
   if (!snapshot.text) return clearSelect(el);
@@ -261,17 +257,56 @@ export async function restoreSelect(el, snapshot) {
   return result.status === "filled" ? restored() : failed(result.reason);
 }
 
-/** 普通下拉和可搜索下拉共用的控件处理器。 */
-export const selectControl = {
-  snapshot: (field) => snapshotSelect(field.element),
-  restore: (field, snapshot) => restoreSelect(field.element, snapshot),
-  async fill(field, value, resumeField) {
-    const wantedText = valueToText(value);
-    const candidates = buildCandidates(fieldNameOf(resumeField), wantedText);
-    const searchable = field.controlType === "searchable-select" || isSearchable(field.element);
-    return chooseFromSelect(field.element, (texts) => pickBestOption(texts, candidates), {
-      wantedText,
-      keywords: searchable ? searchKeywords(wantedText) : null,
-    });
-  },
+/**
+ * 一套组件库的下拉操作。不同网站的下拉 DOM 不一样（Ant Design、Moka 的 sd-Select……），
+ * 但"选中哪一项、怎么回读、怎么撤销"的逻辑是一样的，填写逻辑只通过这几个函数碰页面。
+ * @typedef {Object} SelectOps
+ * @property {(el: HTMLElement, match: (texts: string[]) => any, options: { wantedText: string, keywords?: string[]|null }) => Promise<object>} choose
+ * @property {(el: HTMLElement) => string} readText
+ * @property {(el: HTMLElement, snapshot: { text: string }) => Promise<object>} restore
+ * @property {(el: HTMLElement) => boolean} isDisabled
+ * @property {(el: HTMLElement) => boolean} isSearchable 能不能打字过滤
+ */
+
+/** @type {SelectOps} */
+export const antSelectOps = {
+  choose: chooseFromSelect,
+  readText: readSelectText,
+  restore: restoreSelect,
+  isDisabled: isSelectDisabled,
+  isSearchable: (el) => !isNativeSelect(el) && isSearchable(el),
 };
+
+/** 字段里真正的下拉：平台适配器扫描时会把它放在 subElements.input，否则就是字段本身。 */
+const selectOf = (field) => field.subElements?.input ?? field.element;
+
+/**
+ * 普通下拉和可搜索下拉共用的控件处理器。
+ * @param {SelectOps} ops
+ */
+export function createSelectControl(ops) {
+  return {
+    snapshot: (field) => ({ text: ops.readText(selectOf(field)) }),
+    restore: (field, snapshot) => ops.restore(selectOf(field), snapshot),
+    async fill(field, value, resumeField) {
+      // 简历里存了多个（如期望城市），单选下拉只能选一个：选第一个，请用户确认。
+      let note = "";
+      if (Array.isArray(value)) {
+        if (value.length > 1) note = `简历里有 ${value.length} 项（${valueToText(value)}），这里只能选一个，选了第一个`;
+        value = value[0];
+      }
+      const el = selectOf(field);
+      const wantedText = valueToText(value);
+      const candidates = buildCandidates(fieldNameOf(resumeField), wantedText);
+      const searchable = field.controlType === "searchable-select" || ops.isSearchable(el);
+      const result = await ops.choose(el, (texts) => pickBestOption(texts, candidates), {
+        wantedText,
+        keywords: searchable ? searchKeywords(wantedText) : null,
+      });
+      if (note && result.status === "filled") return needsConfirmation(result.filledText, note);
+      return result;
+    },
+  };
+}
+
+export const selectControl = createSelectControl(antSelectOps);

@@ -3,7 +3,7 @@
  */
 
 import { scanFormFields, getElementDigest } from "./scanner/scanner.js";
-import { matchFields } from "./matcher/matcher.js";
+import { matchFields, planSectionArrays, detectSectionFromTitle } from "./matcher/matcher.js";
 import { fillFields, expandRepeatableSections, undoFill } from "./filler/filler.js";
 import { summarizeFillResults, renderReviewPanel, removeReviewPanel } from "./review/review.js";
 import { detectAdapter } from "./adapters/index.js";
@@ -15,11 +15,28 @@ document.documentElement.setAttribute("data-resume-speedrun-injected", "true");
 let lastFill = null;
 let busy = false;
 
-async function scanAndMatch() {
+/**
+ * 扫描 + 识别。profile 用来决定经历区块对应简历里的哪个数组（见 planSectionArrays），
+ * 做诊断时没有简历，传 null。
+ */
+async function scanAndMatch(profile) {
   const adapter = detectAdapter();
-  const fields = scanFormFields(document);
-  const matches = await matchFields(fields, { platform: adapter.id, useAi: false });
-  return { fields, matches };
+  const fields = scanFormFields(document, { adapter });
+  // 适配器没扫到、退回了通用扫描时，经历区块也按通用方式从扫描结果推断。
+  const fromAdapter = fields.some((f) => f.kit);
+  const repeatable = fromAdapter ? (adapter.getRepeatableSections?.(document) ?? null) : null;
+  const sectionArrays = planSectionArrays(
+    [...fields.map((f) => f.sectionTitle), ...(repeatable ?? []).map((s) => s.title)],
+    profile
+  );
+  const matches = await matchFields(fields, {
+    platform: adapter.id,
+    adapterRules: adapter.getFieldSelectors(),
+    sectionArrays,
+    useAi: false,
+  });
+  const sections = repeatable?.map((s) => ({ ...s, arrayName: sectionArrays[detectSectionFromTitle(s.title)] }));
+  return { adapter, fields, matches, sections: sections ?? null };
 }
 
 function locateField(fieldId) {
@@ -47,10 +64,10 @@ async function runAutoFill(rawProfile) {
     const profile = migrateResumeProfile(rawProfile);
     removeReviewPanel();
 
-    let { fields, matches } = await scanAndMatch();
+    let { fields, matches, sections } = await scanAndMatch(profile);
     // 简历经历段数比页面多时，先点"添加"补齐区块，再重新扫描匹配。
-    const expansion = await expandRepeatableSections(fields, matches, profile);
-    if (expansion.added > 0) ({ fields, matches } = await scanAndMatch());
+    const expansion = await expandRepeatableSections(fields, matches, profile, sections);
+    if (expansion.added > 0) ({ fields, matches } = await scanAndMatch(profile));
 
     const journal = [];
     const results = await fillFields(fields, matches, profile, { journal });
@@ -88,18 +105,16 @@ async function runUndo() {
 }
 
 async function runScanDiagnostics() {
-  const adapter = detectAdapter();
-  const fields = scanFormFields(document);
-  const matches = await matchFields(fields, {
-    platform: adapter.id,
-    useAi: false,
-  });
+  const { adapter, fields, matches } = await scanAndMatch(null);
 
   const diagnostics = fields.map((field) => {
     const match = matches.find((m) => m.fieldId === field.id);
     return {
       id: field.id,
       controlType: field.controlType,
+      kit: field.kit || null,
+      skipReason: field.skipReason || null,
+      unavailable: !!match?.unavailable,
       label: field.label,
       sectionTitle: field.sectionTitle,
       sectionIndex: field.sectionIndex,
@@ -122,7 +137,7 @@ async function runScanDiagnostics() {
 function renderDiagnosticOverlays(diagnostics) {
   removeDiagnosticOverlays();
 
-  const fields = scanFormFields(document);
+  const fields = scanFormFields(document, { adapter: detectAdapter() });
 
   for (const field of fields) {
     const diag = diagnostics.fields.find((d) => d.id === field.id);

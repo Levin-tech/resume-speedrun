@@ -58,6 +58,27 @@ describe("migrateResumeProfile", () => {
     expect(migrated.education[0].gpa).toBe("");
   });
 
+  it("版本 1 数据升级到版本 2：补上工作经历、工作经验、薪资、兴趣爱好、语言能力，实习经历原样保留", () => {
+    const v1 = {
+      id: "v1",
+      schemaVersion: 1,
+      name: "旧简历",
+      basic: { fullName: "赵六" },
+      expectation: { position: "产品经理", cities: ["上海"] },
+      education: [],
+      internships: [{ company: "某公司", title: "产品实习生", startDate: { year: 2024, month: 7 } }],
+      projects: [],
+      skills: { englishLevel: "CET-4" },
+    };
+    const migrated = migrateResumeProfile(v1);
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.workExperiences).toEqual([]);
+    expect(migrated.internships[0]).toMatchObject({ company: "某公司", title: "产品实习生", isCurrent: false });
+    expect(migrated.basic).toMatchObject({ fullName: "赵六", workYears: "" });
+    expect(migrated.expectation).toMatchObject({ position: "产品经理", currentSalary: "", expectedSalary: "" });
+    expect(migrated.skills).toMatchObject({ englishLevel: "CET-4", hobbies: "", languageSkills: "" });
+  });
+
   it("当前版本数据原样通过（缺字段自动补空值）", () => {
     const current = createEmptyResumeProfile("id-2");
     current.basic.fullName = "李四";

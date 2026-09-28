@@ -4,7 +4,24 @@ import {
   matchFields,
   computeLabelScore,
   detectSectionFromTitle,
+  planSectionArrays,
 } from "../../src/content/matcher/matcher.js";
+
+describe("planSectionArrays", () => {
+  const internshipsOnly = { internships: [{}], workExperiences: [] };
+
+  it("默认：工作经历用 workExperiences", () => {
+    expect(planSectionArrays(["工作经历", "实习经历"], internshipsOnly).work).toBe("workExperiences");
+    expect(planSectionArrays(["工作经历"], { internships: [{}], workExperiences: [{}] }).work).toBe(
+      "workExperiences"
+    );
+  });
+
+  it("页面只有“工作经历”、简历只填了实习（旧版本的“实习/工作经历”）时，用实习经历来填", () => {
+    expect(planSectionArrays(["基本信息", "工作经历"], internshipsOnly).work).toBe("internships");
+    expect(planSectionArrays(["工作经历"], null).work).toBe("workExperiences");
+  });
+});
 
 describe("GENERIC_KEYWORD_RULES", () => {
   it("覆盖了基本信息里最常见的字段", () => {
@@ -50,9 +67,10 @@ describe("detectSectionFromTitle", () => {
     expect(detectSectionFromTitle("学历信息")).toBe("education");
   });
 
-  it("识别实习/工作经历", () => {
+  it("识别实习/工作经历：工作经历单独一类，混写的算实习", () => {
     expect(detectSectionFromTitle("实习经历")).toBe("internship");
-    expect(detectSectionFromTitle("工作经历")).toBe("internship");
+    expect(detectSectionFromTitle("工作经历")).toBe("work");
+    expect(detectSectionFromTitle("实习/工作经历")).toBe("internship");
   });
 
   it("识别项目经历", () => {
@@ -108,6 +126,76 @@ describe("matchFields", () => {
     const results = await matchFields(fields, { platform: "generic", useAi: false });
     expect(results[0].resumeField).toBe("internships[0].company");
     expect(results[1].resumeField).toBe("internships[0].title");
+  });
+
+  it("Moka 上常见的字段：汇总项、薪资、兴趣爱好、获奖、自我描述、语言能力", async () => {
+    const labels = {
+      最高学历: "derived.highestDegree",
+      最近毕业专业: "derived.latestMajor",
+      毕业时间: "derived.graduationDate",
+      目前职位: "derived.currentTitle",
+      语言能力: "derived.languageAbility",
+      当前薪资: "expectation.currentSalary",
+      期望薪资: "expectation.expectedSalary",
+      意向工作城市: "expectation.cities",
+      所在行业: "expectation.currentIndustry",
+      期望行业: "expectation.expectedIndustry",
+      到岗时间: "expectation.availableDate",
+      技能: "skills.skills",
+      兴趣爱好: "skills.hobbies",
+      获奖经历: "skills.awards",
+      自我描述: "skills.selfEvaluation",
+    };
+    const fields = Object.keys(labels).map((label, i) => ({
+      id: `f${i}`,
+      label,
+      controlType: "text",
+      sectionTitle: "个人信息",
+      sectionIndex: 0,
+    }));
+    const results = await matchFields(fields, { platform: "generic", useAi: false });
+    expect(Object.fromEntries(results.map((r, i) => [fields[i].label, r.resumeField]))).toEqual(labels);
+  });
+
+  it("信息库里本来就没有的项标 unavailable，不乱猜", async () => {
+    const fields = ["推荐码", "汇报对象", "离职原因", "简历更新时间"].map((label, i) => ({
+      id: `f${i}`,
+      label,
+      controlType: "text",
+      sectionTitle: "工作经历",
+      sectionIndex: 0,
+    }));
+    const results = await matchFields(fields, { platform: "moka", useAi: false });
+    for (const r of results) expect(r).toMatchObject({ resumeField: null, unavailable: true });
+  });
+
+  it("平台适配器规则优先（标签完全一致才算），只用于经历区块外", async () => {
+    const adapterRules = { "basic.currentCity": ["所在地"], "basic.workYears": ["工作经验"] };
+    const fields = [
+      { id: "a", label: "所在地", controlType: "cascader", sectionTitle: "个人信息", sectionIndex: 0, container: null },
+      { id: "b", label: "户口所在地", controlType: "text", sectionTitle: "个人信息", sectionIndex: 0, container: null },
+      { id: "c", label: "工作经验", controlType: "select", sectionTitle: "个人信息", sectionIndex: 0, container: null },
+    ];
+    const results = await matchFields(fields, { platform: "moka", adapterRules, useAi: false });
+    expect(results[0]).toMatchObject({ resumeField: "basic.currentCity", matchedBy: "adapter" });
+    expect(results[1].resumeField).toBeNull();
+    expect(results[2]).toMatchObject({ resumeField: "basic.workYears", matchedBy: "adapter" });
+  });
+
+  it("工作经历和实习经历分别对应 workExperiences 和 internships；教育区块里的“毕业时间”是那一段的结束时间", async () => {
+    const fields = [
+      { id: "w", label: "公司名称", controlType: "text", sectionTitle: "工作经历", sectionIndex: 1 },
+      { id: "i", label: "公司名称", controlType: "text", sectionTitle: "实习经历", sectionIndex: 0 },
+      { id: "d", label: "起止时间", controlType: "date-range-group", sectionTitle: "工作经历", sectionIndex: 0 },
+      { id: "g", label: "毕业时间", controlType: "year-month", sectionTitle: "教育背景", sectionIndex: 1 },
+    ];
+    const results = await matchFields(fields, { platform: "moka", useAi: false });
+    expect(results.map((r) => r.resumeField)).toEqual([
+      "workExperiences[1].company",
+      "internships[0].company",
+      "workExperiences[0].dateRange",
+      "education[1].endDate",
+    ]);
   });
 
   it("没把握的字段标记为 none", async () => {

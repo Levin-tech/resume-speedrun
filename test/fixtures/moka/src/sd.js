@@ -1,0 +1,483 @@
+// 仿 Moka 自研组件库（sd- 前缀）。按 2026-09 在 app.mokahr.com 实测的 DOM 结构复刻：
+// 类名带 CSS Modules 式的随机哈希后缀（每次打开页面都不一样），下拉类控件
+// 只响应 mousedown（只 click 打不开），浮层渲染在字段内部，点外面关闭。
+// 真实页面的细节以 docs/platforms/moka.md 为准，这里只是尽量贴近的仿真。
+import { defineComponent, h, ref, computed, onMounted, onBeforeUnmount } from "vue";
+
+const HASH_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const hashes = new Map();
+
+function randomHash() {
+  const length = 5 + Math.floor(Math.random() * 6);
+  let text = "";
+  for (let i = 0; i < length; i += 1) text += HASH_CHARS[Math.floor(Math.random() * HASH_CHARS.length)];
+  // 真实的 CSS Modules 哈希基本都混有大写或数字，这里保证一定有，免得偶发撞上英文单词。
+  return `${text.slice(0, -1)}${Math.floor(Math.random() * 10)}`;
+}
+
+/** 同一个基础类名在整个页面里用同一个哈希，就像 CSS Modules 打包出来的一样。 */
+export function cx(base) {
+  if (!hashes.has(base)) hashes.set(base, randomHash());
+  return `${base}-${hashes.get(base)}`;
+}
+
+/** 点控件外面（mousedown）时关闭浮层。 */
+function useOutsideClose(rootRef, isOpen, close) {
+  const onDocumentDown = (event) => {
+    if (isOpen() && rootRef.value && !rootRef.value.contains(event.target)) close();
+  };
+  onMounted(() => document.addEventListener("mousedown", onDocumentDown));
+  onBeforeUnmount(() => document.removeEventListener("mousedown", onDocumentDown));
+}
+
+function clearIcon(onClear) {
+  return h(
+    "span",
+    {
+      class: cx("sd-Input-clear"),
+      onMousedown: (event) => event.preventDefault(),
+      onClick: (event) => {
+        event.preventDefault();
+        onClear();
+      },
+    },
+    "×"
+  );
+}
+
+function menu(items, onPick, selected) {
+  return h("div", { class: cx("sd-Dropdown-container") }, [
+    h("div", { class: cx("sd-Dropdown-dropdown") }, [
+      h(
+        "div",
+        { class: cx("sd-Select-menu") },
+        items.length
+          ? items.map((item) =>
+              h(
+                "div",
+                {
+                  class: [cx("sd-Menu-content-item"), item.label === selected && cx("sd-Menu-content-item-selected")],
+                  key: item.label,
+                  onClick: () => onPick(item),
+                },
+                [h("span", { class: "option-label" }, item.label)]
+              )
+            )
+          : [h("div", { class: cx("sd-Select-empty") }, "暂无数据")]
+      ),
+    ]),
+  ]);
+}
+
+export const SdInput = defineComponent({
+  props: { value: String, placeholder: { type: String, default: "请输入" } },
+  emits: ["update:value"],
+  setup(props, { emit }) {
+    return () =>
+      h("label", { class: cx("sd-Input-container") }, [
+        h("input", {
+          class: cx("sd-Input-input"),
+          value: props.value,
+          placeholder: props.placeholder,
+          onInput: (event) => emit("update:value", event.target.value),
+        }),
+      ]);
+  },
+});
+
+export const SdTextarea = defineComponent({
+  props: { value: String },
+  emits: ["update:value"],
+  setup(props, { emit }) {
+    return () =>
+      h("label", { class: cx("sd-Textarea-container") }, [
+        h("textarea", {
+          class: cx("sd-Textarea-textarea"),
+          rows: 3,
+          value: props.value,
+          placeholder: "请输入",
+          onInput: (event) => emit("update:value", event.target.value),
+        }),
+      ]);
+  },
+});
+
+/**
+ * 下拉。filterable 的输入框可以打字过滤（Moka 的"年"就是这样）。
+ * 鼠标移到输入框上时出现清空按钮。
+ */
+export const SdSelect = defineComponent({
+  props: {
+    value: [String, Number],
+    options: Array,
+    placeholder: { type: String, default: "请选择" },
+    filterable: Boolean,
+    disabled: Boolean,
+    width: String,
+  },
+  emits: ["update:value"],
+  setup(props, { emit }) {
+    const root = ref(null);
+    const open = ref(false);
+    const hovering = ref(false);
+    const query = ref("");
+    const selected = computed(() => props.options.find((o) => o.value === props.value)?.label ?? "");
+    const visibleOptions = computed(() =>
+      props.filterable && query.value ? props.options.filter((o) => o.label.includes(query.value)) : props.options
+    );
+    const close = () => {
+      open.value = false;
+      query.value = "";
+    };
+    useOutsideClose(root, () => open.value, close);
+
+    const onMousedown = () => {
+      if (props.disabled) return;
+      if (open.value && !props.filterable) close();
+      else open.value = true;
+    };
+    const pick = (option) => {
+      emit("update:value", option.value);
+      close();
+    };
+
+    return () =>
+      h("div", { class: cx("sd-Select-wrapper"), ref: root, style: props.width ? { width: props.width } : null }, [
+        h(
+          "label",
+          {
+            class: [cx("sd-Input-container"), cx("sd-Select-container"), props.disabled && cx("sd-Select-disabled")],
+            onMouseenter: () => (hovering.value = true),
+            onMouseleave: () => (hovering.value = false),
+          },
+          [
+            h("input", {
+              class: cx("sd-Input-input"),
+              readonly: !props.filterable,
+              disabled: props.disabled,
+              value: open.value && props.filterable ? query.value : selected.value,
+              placeholder: open.value && props.filterable && selected.value ? selected.value : props.placeholder,
+              onMousedown,
+              onInput: (event) => (query.value = event.target.value),
+            }),
+            hovering.value && selected.value && !props.disabled
+              ? clearIcon(() => emit("update:value", null))
+              : h("span", { class: cx("sd-Select-arrow") }, "▾"),
+          ]
+        ),
+        open.value ? menu(visibleOptions.value, pick, selected.value) : null,
+      ]);
+  },
+});
+
+/** 学校/专业这类"输入后出联想候选"的输入框：候选要点选；没有候选时输入的文字照样保留。 */
+export const SdSuggest = defineComponent({
+  props: { value: String, candidates: Array },
+  emits: ["update:value", "pick"],
+  setup(props, { emit }) {
+    const root = ref(null);
+    const open = ref(false);
+    const results = ref([]);
+    let timer = null;
+    useOutsideClose(root, () => open.value, () => (open.value = false));
+    onBeforeUnmount(() => clearTimeout(timer));
+
+    const onInput = (event) => {
+      const text = event.target.value;
+      emit("update:value", text);
+      clearTimeout(timer);
+      open.value = false;
+      if (!text.trim()) return;
+      // 模拟向服务器请求联想结果的延迟。
+      timer = setTimeout(() => {
+        results.value = props.candidates.filter((c) => c.includes(text.trim())).map((label) => ({ label }));
+        open.value = results.value.length > 0;
+      }, 150);
+    };
+    const pick = (item) => {
+      emit("update:value", item.label);
+      emit("pick", item.label);
+      open.value = false;
+    };
+
+    return () =>
+      h("div", { class: cx("sd-Dropdown-trigger"), ref: root }, [
+        h("label", { class: cx("sd-Input-container") }, [
+          h("input", {
+            class: cx("sd-Input-input"),
+            value: props.value,
+            placeholder: "请输入",
+            onInput,
+          }),
+        ]),
+        open.value ? menu(results.value, pick, props.value) : null,
+      ]);
+  },
+});
+
+export const SdCheckbox = defineComponent({
+  props: { checked: Boolean, label: String },
+  emits: ["update:checked"],
+  setup(props, { emit }) {
+    return () =>
+      h("label", { class: [cx("sd-Checkbox-container"), props.checked && cx("sd-Checkbox-checked")] }, [
+        h("span", { class: cx("sd-Checkbox-checkbox") }, [
+          h("input", {
+            type: "checkbox",
+            class: cx("sd-Checkbox-input"),
+            checked: props.checked,
+            onChange: (event) => emit("update:checked", event.target.checked),
+          }),
+        ]),
+        h("span", { class: cx("sd-Checkbox-label") }, props.label),
+      ]);
+  },
+});
+
+/** 只读输入框 + 点开的面板，出生日期和籍贯共用这个外壳。 */
+function panelShell({ root, open, hovering, value, placeholder, onToggle, onClear }, panel) {
+  return h("div", { class: cx("sd-Picker-wrapper"), ref: root }, [
+    h(
+      "label",
+      {
+        class: cx("sd-Input-container"),
+        onMouseenter: () => (hovering.value = true),
+        onMouseleave: () => (hovering.value = false),
+      },
+      [
+        h("input", {
+          class: cx("sd-Input-input"),
+          readonly: true,
+          value,
+          placeholder,
+          onMousedown: onToggle,
+        }),
+        hovering.value && value ? clearIcon(onClear) : null,
+      ]
+    ),
+    open.value ? panel() : null,
+  ]);
+}
+
+const MONTH_NAMES = ["一月", "二月", "三月", "四月", "五月", "六月", "七月", "八月", "九月", "十月", "十一月", "十二月"];
+const pad = (n) => String(n).padStart(2, "0");
+
+/** 出生日期：顶部年份选择（点开是年份列表），下面点月份（一月…十二月），再点日。 */
+export const SdDayPicker = defineComponent({
+  props: { value: String, minYear: Number, maxYear: Number },
+  emits: ["update:value"],
+  setup(props, { emit }) {
+    const root = ref(null);
+    const open = ref(false);
+    const hovering = ref(false);
+    const year = ref(1990);
+    const month = ref(null);
+    const yearListOpen = ref(false);
+    useOutsideClose(root, () => open.value, () => (open.value = false));
+
+    const toggle = () => {
+      if (!open.value) {
+        year.value = props.value ? Number(props.value.slice(0, 4)) : 1990;
+        month.value = null;
+        yearListOpen.value = false;
+      }
+      open.value = !open.value;
+    };
+
+    const panel = () => {
+      const years = [];
+      for (let y = props.maxYear; y >= props.minYear; y -= 1) years.push(y);
+      const header = h("div", { class: cx("sd-basic-selector") }, [
+        h(
+          "span",
+          { class: cx("sd-basic-selector-year"), onClick: () => (yearListOpen.value = !yearListOpen.value) },
+          `${year.value}年`
+        ),
+        month.value ? h("span", { class: cx("sd-basic-selector-month") }, MONTH_NAMES[month.value - 1]) : null,
+      ]);
+      let body;
+      if (yearListOpen.value) {
+        body = h(
+          "div",
+          { class: cx("sd-basic-selector-year-list") },
+          years.map((y) =>
+            h(
+              "div",
+              {
+                class: cx("sd-basic-selector-year-option"),
+                key: y,
+                onClick: () => {
+                  year.value = y;
+                  yearListOpen.value = false;
+                },
+              },
+              `${y}年`
+            )
+          )
+        );
+      } else if (!month.value) {
+        body = h(
+          "div",
+          { class: cx("sd-basic-year-panel") },
+          MONTH_NAMES.map((name, i) =>
+            h("div", { class: cx("sd-basic-year-item"), key: name, onClick: () => (month.value = i + 1) }, name)
+          )
+        );
+      } else {
+        const days = new Date(year.value, month.value, 0).getDate();
+        body = h(
+          "div",
+          { class: cx("sd-basic-month-panel") },
+          Array.from({ length: days }, (_, i) =>
+            h(
+              "div",
+              {
+                class: cx("sd-basic-day-item"),
+                key: i,
+                onClick: () => {
+                  emit("update:value", `${year.value}-${pad(month.value)}-${pad(i + 1)}`);
+                  open.value = false;
+                },
+              },
+              String(i + 1)
+            )
+          )
+        );
+      }
+      return h("div", { class: cx("sd-panal-menu-wrapper") }, [header, body]);
+    };
+
+    return () =>
+      panelShell(
+        {
+          root,
+          open,
+          hovering,
+          value: props.value,
+          placeholder: "请选择日期",
+          onToggle: toggle,
+          onClear: () => emit("update:value", ""),
+        },
+        panel
+      );
+  },
+});
+
+const LEVEL_TABS = ["省份", "城市", "县区"];
+
+/**
+ * 地区（籍贯/所在地）：只读输入框，mousedown 打开 menu-wrapper 面板，有"热门地区"
+ * 标签（sd-Tag）和"省份/城市/县区"三个页签，逐级点选；每选一级就写回输入框。
+ */
+export const SdLocation = defineComponent({
+  props: { value: Array, regions: Array, hot: Array },
+  emits: ["update:value"],
+  setup(props, { emit }) {
+    const root = ref(null);
+    const open = ref(false);
+    const hovering = ref(false);
+    const tab = ref(0);
+    const path = ref([]);
+    useOutsideClose(root, () => open.value, () => (open.value = false));
+
+    const nodesAt = (level, currentPath) => {
+      let nodes = props.regions;
+      for (let i = 0; i < level; i += 1) {
+        nodes = nodes.find((n) => n.name === currentPath[i])?.children ?? [];
+      }
+      return nodes;
+    };
+    const choose = (level, name) => {
+      const next = [...path.value.slice(0, level), name];
+      path.value = next;
+      emit("update:value", next);
+      if (nodesAt(level + 1, next).length) tab.value = level + 1;
+      else open.value = false;
+    };
+    const chooseHot = (city) => {
+      for (const province of props.regions) {
+        const found = province.children.find((c) => c.name.startsWith(city));
+        if (found) {
+          path.value = [province.name, found.name];
+          emit("update:value", path.value);
+          tab.value = 2;
+          return;
+        }
+      }
+    };
+
+    const panel = () =>
+      h("div", { class: cx("menu-wrapper") }, [
+        h("div", { class: cx("menu-hot") }, [
+          h("span", { class: cx("menu-hot-title") }, "热门地区"),
+          ...props.hot.map((city) =>
+            h("span", { class: cx("sd-Tag-tag"), key: city, onClick: () => chooseHot(city) }, city)
+          ),
+        ]),
+        h(
+          "div",
+          { class: cx("menu-tabs") },
+          LEVEL_TABS.map((name, level) =>
+            h(
+              "div",
+              {
+                class: [cx("menu-tab"), level === tab.value && cx("menu-tab-active")],
+                key: name,
+                onClick: () => {
+                  if (level <= path.value.length) tab.value = level;
+                },
+              },
+              name
+            )
+          )
+        ),
+        h(
+          "div",
+          { class: cx("menu-content") },
+          nodesAt(tab.value, path.value).map((node) =>
+            h(
+              "span",
+              {
+                class: [cx("menu-item"), path.value[tab.value] === node.name && cx("menu-item-active")],
+                key: node.name,
+                onClick: () => choose(tab.value, node.name),
+              },
+              node.name
+            )
+          )
+        ),
+      ]);
+
+    const toggle = () => {
+      if (!open.value) {
+        path.value = [...(props.value ?? [])];
+        tab.value = 0;
+      }
+      open.value = !open.value;
+    };
+
+    return () =>
+      panelShell(
+        {
+          root,
+          open,
+          hovering,
+          value: (props.value ?? []).join("/"),
+          placeholder: "请选择",
+          onToggle: toggle,
+          onClear: () => emit("update:value", []),
+        },
+        panel
+      );
+  },
+});
+
+export const SdUpload = defineComponent({
+  props: { text: String },
+  setup(props) {
+    return () =>
+      h("div", { class: cx("sd-Upload-container") }, [
+        h("span", { class: cx("sd-Upload-trigger") }, props.text || "点击上传"),
+      ]);
+  },
+});

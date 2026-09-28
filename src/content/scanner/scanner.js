@@ -6,7 +6,11 @@
 /**
  * @typedef {Object} FormField
  * @property {string} id 扫描器生成的临时 id
- * @property {'text'|'textarea'|'select'|'searchable-select'|'date'|'date-range-group'|'cascader'|'radio'|'checkbox'} controlType
+ * @property {'text'|'textarea'|'select'|'searchable-select'|'suggest'|'date'|'year-month'|'date-range-group'|'cascader'|'radio'|'checkbox'|'upload'|'confirm'|'unknown'} controlType
+ * @property {string} [kit] 平台自研组件库标识（如 "moka"），filler 据此选控件处理器
+ * @property {Record<string, HTMLElement|null>} [subElements] 控件里真正要操作的元素
+ *   （如年月下拉组的 4 个下拉、Moka 字段里的输入框）
+ * @property {string} [skipReason] 不该由插件填写的项（上传附件、声明勾选），填写时直接跳过
  * @property {string} label 控件关联的文案标签
  * @property {HTMLElement} element 控件根节点
  * @property {HTMLElement} [container] 控件所在的重复区块容器
@@ -19,15 +23,19 @@
 
 /**
  * 扫描传入的根节点，返回本次识别到的所有表单控件。
+ * 平台适配器能按自己的页面结构扫描时优先用它的结果，扫不到再走通用扫描。
  * @param {ParentNode} [root]
+ * @param {{ adapter?: import('../adapters/adapter-interface.js').PlatformAdapter }} [options]
  * @returns {FormField[]}
  */
-export function scanFormFields(root = document) {
-  const fields = [];
+export function scanFormFields(root = document, { adapter } = {}) {
+  let fields = adapter?.scanFields?.(root) ?? [];
 
-  const roots = collectRoots(root);
-  for (const r of roots) {
-    fields.push(...scanRoot(r));
+  if (fields.length === 0) {
+    fields = [];
+    for (const r of collectRoots(root)) {
+      fields.push(...scanRoot(r));
+    }
   }
 
   fields.forEach((field, index) => {

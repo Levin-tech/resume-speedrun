@@ -33,7 +33,13 @@ Excel。所有数据只存在浏览器本地（`chrome.storage.local`），不�
   平行的目录结构。
 - **平台适配器**：每个网站一个文件放在 `src/content/adapters/`，必须
   实现 `adapter-interface.js` 里定义的 `detect()` / `getFieldSelectors()`
-  形状；找不到平台专属规则时统一 fallback 到 `generic.js`。
+  形状；找不到平台专属规则时统一 fallback 到 `generic.js`。网站结构固定
+  的（如 Moka）可以再实现可选的 `scanFields()` / `getRepeatableSections()`，
+  scanner 优先用适配器的扫描结果；平台自研组件库的操作方式放在
+  `filler/controls/<平台>-*.js`，扫描结果用 `kit` 标明。每个平台的页面结构
+  写进 `docs/platforms/<平台>.md`。
+- **类名带哈希的网站**（如 Moka 的 `sd-Input-input-10L0t`）：选择器一律用
+  `[class*="前缀"]` 前缀匹配，绝不写死哈希。
 - **绝不点击的按钮**：`SUBMIT_LIKE_BLACKLIST`（定义在
   `src/content/filler/dom-actions.js`，`filler.js` 里重新导出）是硬性
   黑线——任何"提交/保存/下一步/确认/投递/删除"类文案的按钮，filler 都
@@ -50,7 +56,9 @@ Excel。所有数据只存在浏览器本地（`chrome.storage.local`），不�
   的对应关系放 `synonyms.js`，不要把网站原始文案直接存进简历数据里。
 - **测试**：新功能尽量先在 `test/fixtures/` 这个本地测试页里跑通，
   这个测试页用真实的 Ant Design Vue 组件搭建（不是手写的假 DOM），
-  更接近真实网申页面的组件行为。单元测试用 vitest，跑
+  更接近真实网申页面的组件行为。适配具体平台时，按实测的页面结构在
+  `test/fixtures/<平台>/` 做一个仿真页（如 `test/fixtures/moka/`：类名带
+  随机哈希、下拉只响应 mousedown），真实页面由维护者另外验证。单元测试用 vitest，跑
   `npm run test:unit`；端到端/冒烟测试用 Playwright，跑
   `npm run test:e2e`；`npm test` 会按顺序把构建 + 两类测试都跑一遍。
 - **注释与文档**：默认不写注释；只在"为什么这么做"不直观时才写一行
@@ -80,10 +88,12 @@ src/
     options-data/   标准值枚举 + 同义词表
 docs/
   requirements.md   完整需求文档
+  platforms/        各平台页面结构与适配说明（moka.md……）
 test/
   fixtures/         本地测试页（Ant Design Vue 搭的模拟网申表单）
+    moka/           Moka 网申页仿真（照实测结构复刻的 sd- 组件）
   unit/             vitest 单元测试
-  e2e/              Playwright 冒烟测试
+  e2e/              Playwright 端到端测试（helpers.js 是公共工具）
 scripts/            esbuild 构建脚本
 ```
 
@@ -93,8 +103,17 @@ scripts/            esbuild 构建脚本
 逐项填写文本框、下拉、可搜索下拉、日期、拆分年月下拉 +"至今"、城市
 级联、单选多选，自动补齐多段经历，给出检查清单并支持撤销。
 
+第 4 阶段（Moka 适配）已在仿真页 `test/fixtures/moka/` 上跑通：扫描、
+识别、填写（sd- 下拉、年/月、起止时间 +"至今"、出生日期面板、地区三级、
+学校/专业联想输入）、补齐多段经历（包括一段都没有的区块）、撤销。结构
+与待真实页面确认的细节见 `docs/platforms/moka.md`。简历数据升级到版本 2：
+工作经历和实习经历分开存，新增工作经验年限、当前/期望薪资、兴趣爱好、
+语言能力；"最高学历""最近毕业专业"这类汇总项从经历里现算（`derived.*`）。
+
 已知限制：单选框一旦选中，页面本身就没有"取消选择"的操作，撤销时
 没法还原成"未选"，会在清单里标出来请用户手动检查；自动点"添加"加出
-来的经历区块撤销后保留为空白（插件不点删除）。
+来的经历区块撤销后保留为空白（插件不点删除）。上传附件、声明勾选框
+插件不碰，清单里提示用户自己处理。
 
-后续：按平台（Moka、北森、飞书……）补适配器、接入 AI 兜底、投递记录。
+后续：在真实 Moka 页面上验证并修正仿真页；北森、飞书适配器；AI 兜底；
+投递记录。

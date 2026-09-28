@@ -12,7 +12,7 @@
  */
 
 /** 当前最新的数据结构版本号。 */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /** @typedef {{ year: number|null, month: number|null }} YearMonth */
 /** @typedef {{ year: number|null, month: number|null, day: number|null }} FullDate */
@@ -45,6 +45,11 @@ export const CURRENT_SCHEMA_VERSION = 1;
  */
 
 /**
+ * 正式工作经历（版本 2 起和实习经历分开存），字段同 InternshipEntry。
+ * @typedef {InternshipEntry} WorkEntry
+ */
+
+/**
  * @typedef {Object} ProjectEntry
  * @property {string} name 项目名称
  * @property {string} role 担任角色
@@ -68,6 +73,7 @@ export const CURRENT_SCHEMA_VERSION = 1;
  * @property {string} nativePlace 籍贯
  * @property {string} currentCity 现居城市
  * @property {string} country 国家/地区
+ * @property {string} workYears 工作经验年限（标准值）
  */
 
 /**
@@ -77,6 +83,8 @@ export const CURRENT_SCHEMA_VERSION = 1;
  * @property {string} currentIndustry 所在行业（标准值）
  * @property {string} expectedIndustry 期望行业（标准值）
  * @property {YearMonth} availableDate 到岗时间
+ * @property {string} currentSalary 当前薪资（自由文字，如"15K×14"）
+ * @property {string} expectedSalary 期望薪资（自由文字，如"20-25K"）
  */
 
 /**
@@ -86,6 +94,8 @@ export const CURRENT_SCHEMA_VERSION = 1;
  * @property {string[]} certificates 证书（多个）
  * @property {string[]} awards 获奖（多个）
  * @property {string} selfEvaluation 自我评价
+ * @property {string} hobbies 兴趣爱好
+ * @property {string} languageSkills 语言能力（自由文字，如"英语 CET-6 580；日语 N2"）
  */
 
 /**
@@ -96,7 +106,8 @@ export const CURRENT_SCHEMA_VERSION = 1;
  * @property {BasicInfo} basic 基本信息
  * @property {Expectation} expectation 求职意向
  * @property {EducationEntry[]} education 教育经历（可多段）
- * @property {InternshipEntry[]} internships 实习/工作经历（可多段）
+ * @property {InternshipEntry[]} internships 实习经历（可多段）
+ * @property {WorkEntry[]} workExperiences 正式工作经历（可多段）
  * @property {ProjectEntry[]} projects 项目经历（可多段）
  * @property {SkillsInfo} skills 技能与其他
  */
@@ -126,6 +137,7 @@ function emptyBasicInfo() {
     nativePlace: "",
     currentCity: "",
     country: "",
+    workYears: "",
   };
 }
 
@@ -137,6 +149,8 @@ function emptyExpectation() {
     currentIndustry: "",
     expectedIndustry: "",
     availableDate: emptyYearMonth(),
+    currentSalary: "",
+    expectedSalary: "",
   };
 }
 
@@ -148,6 +162,8 @@ function emptySkillsInfo() {
     certificates: [],
     awards: [],
     selfEvaluation: "",
+    hobbies: "",
+    languageSkills: "",
   };
 }
 
@@ -182,6 +198,11 @@ export function createEmptyInternshipEntry() {
   };
 }
 
+/** @returns {WorkEntry} */
+export function createEmptyWorkEntry() {
+  return createEmptyInternshipEntry();
+}
+
 /** @returns {ProjectEntry} */
 export function createEmptyProjectEntry() {
   return {
@@ -208,6 +229,7 @@ export function createEmptyResumeProfile(id) {
     expectation: emptyExpectation(),
     education: [],
     internships: [],
+    workExperiences: [],
     projects: [],
     skills: emptySkillsInfo(),
   };
@@ -232,8 +254,30 @@ export function migrateResumeProfile(data) {
     profile = migrateV0ToV1(profile);
     version = 1;
   }
+  if (version < 2) {
+    profile = migrateV1ToV2(profile);
+    version = 2;
+  }
 
   return normalizeResumeProfile(profile);
+}
+
+/**
+ * 版本 1 升级到版本 2：新增正式工作经历（workExperiences，和实习经历分开）、
+ * 工作经验年限、当前/期望薪资、兴趣爱好、语言能力，全部补空值。版本 1 里
+ * "实习/工作经历"是同一个数组，原样保留在 internships 里，不猜哪段是正式工作。
+ * @param {any} old
+ * @returns {any}
+ */
+function migrateV1ToV2(old) {
+  return {
+    ...old,
+    schemaVersion: 2,
+    basic: { workYears: "", ...old.basic },
+    expectation: { currentSalary: "", expectedSalary: "", ...old.expectation },
+    skills: { hobbies: "", languageSkills: "", ...old.skills },
+    workExperiences: Array.isArray(old.workExperiences) ? old.workExperiences : [],
+  };
 }
 
 /**
@@ -400,6 +444,9 @@ function normalizeResumeProfile(profile) {
       : [],
     internships: Array.isArray(profile.internships)
       ? profile.internships.map((e) => ({ ...createEmptyInternshipEntry(), ...e }))
+      : [],
+    workExperiences: Array.isArray(profile.workExperiences)
+      ? profile.workExperiences.map((e) => ({ ...createEmptyWorkEntry(), ...e }))
       : [],
     projects: Array.isArray(profile.projects)
       ? profile.projects.map((e) => ({ ...createEmptyProjectEntry(), ...e }))

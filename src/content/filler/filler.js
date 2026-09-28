@@ -29,6 +29,10 @@ import { dateControl } from "./controls/date.js";
 import { dateRangeControl } from "./controls/date-range.js";
 import { cascaderControl } from "./controls/cascader.js";
 import { choiceControl } from "./controls/choice.js";
+import { mokaSelectControl, mokaYearMonthControl, mokaDateRangeControl } from "./controls/moka-select.js";
+import { mokaSuggestControl } from "./controls/moka-suggest.js";
+import { mokaBirthdayControl } from "./controls/moka-birthday.js";
+import { mokaLocationControl } from "./controls/moka-location.js";
 
 export { SUBMIT_LIKE_BLACKLIST };
 
@@ -65,7 +69,32 @@ const CONTROL_HANDLERS = {
   checkbox: choiceControl,
 };
 
-const OVERLAY_SELECTOR = ".ant-select-dropdown, .ant-picker-dropdown, .ant-cascader-dropdown";
+/** 平台自研组件库的控件处理器（field.kit 由平台适配器扫描时标上）。 */
+const KIT_HANDLERS = {
+  moka: {
+    text: textControl,
+    textarea: textControl,
+    select: mokaSelectControl,
+    suggest: mokaSuggestControl,
+    "year-month": mokaYearMonthControl,
+    "date-range-group": mokaDateRangeControl,
+    date: mokaBirthdayControl,
+    cascader: mokaLocationControl,
+  },
+};
+
+function handlerFor(field) {
+  if (field.kit) return KIT_HANDLERS[field.kit]?.[field.controlType] ?? null;
+  return CONTROL_HANDLERS[field.controlType] ?? null;
+}
+
+const OVERLAY_SELECTOR = [
+  ".ant-select-dropdown",
+  ".ant-picker-dropdown",
+  ".ant-cascader-dropdown",
+  '[class*="apply-field"] [class*="sd-Dropdown-dropdown"]',
+  '[class*="apply-field"] [class*="menu-wrapper"]',
+].join(", ");
 
 /** 保证页面上没有还开着的浮层，再开始下一个控件。 */
 async function ensureOverlaysClosed() {
@@ -103,6 +132,14 @@ export async function fillFields(fields, matches, profile, { journal = [] } = {}
     const base = describeField(field, match);
     const skip = (reason) => results.push({ ...base, status: "skipped", reason });
 
+    if (field.skipReason) {
+      skip(field.skipReason);
+      continue;
+    }
+    if (match?.unavailable) {
+      skip("信息库无此项，请手动填写");
+      continue;
+    }
     if (!match?.resumeField) {
       skip("没认出这一项对应简历里的哪个字段，请手动填写");
       continue;
@@ -116,7 +153,7 @@ export async function fillFields(fields, matches, profile, { journal = [] } = {}
       skip("简历里这一项是空的");
       continue;
     }
-    const handler = CONTROL_HANDLERS[field.controlType];
+    const handler = handlerFor(field);
     if (!handler) {
       skip("暂不支持这种控件，请手动填写");
       continue;
@@ -157,7 +194,7 @@ export async function undoFill(journal) {
     }
     let outcome;
     try {
-      outcome = await CONTROL_HANDLERS[field.controlType].restore(field, snapshot);
+      outcome = await handlerFor(field).restore(field, snapshot);
     } catch (error) {
       outcome = { status: "failed", reason: `还原时出错：${error.message}` };
     }
@@ -168,7 +205,12 @@ export async function undoFill(journal) {
 }
 
 const ADD_BUTTON_WORDS = ["添加", "新增", "增加", "再加一"];
-const REPEATABLE_ARRAYS = { education: "教育经历", internships: "实习经历", projects: "项目经历" };
+const REPEATABLE_ARRAYS = {
+  education: "教育经历",
+  workExperiences: "工作经历",
+  internships: "实习经历",
+  projects: "项目经历",
+};
 
 /**
  * 在重复区块里找"添加/新增"按钮，命中黑名单的按钮直接跳过。
@@ -200,27 +242,62 @@ export async function clickAddEntryButton(buttonElement) {
 }
 
 /**
- * 简历有 N 段经历、页面只有 M 段时，点 N-M 次对应区块的"添加"按钮，
- * 每次都等新的一段出现。调用方随后要重新扫描再填写。
- * @returns {Promise<{ added: number, results: FillResult[] }>}
+ * 页面上一个可重复的经历区块。平台适配器能直接给出（连一段都还没有的区块也算），
+ * 没有适配器时从扫描结果推断。
+ * @typedef {Object} RepeatableSection
+ * @property {string} arrayName 用简历里的哪个经历数组来填，如 "internships"
+ * @property {string} title 区块标题
+ * @property {Element|null} container
+ * @property {() => number} countEntries 页面上现在有几段
+ * @property {() => HTMLElement|null} findAddButton
  */
-export async function expandRepeatableSections(fields, matches, profile) {
-  let added = 0;
-  const results = [];
-  for (const [arrayName, title] of Object.entries(REPEATABLE_ARRAYS)) {
+
+/** @returns {RepeatableSection[]} */
+function inferSections(fields, matches) {
+  const sections = [];
+  for (const arrayName of Object.keys(REPEATABLE_ARRAYS)) {
     const sectionFields = fields.filter((f) =>
       matches.find((m) => m.fieldId === f.id)?.resumeField?.startsWith(`${arrayName}[`)
     );
-    const wanted = profile?.[arrayName]?.length ?? 0;
-    if (sectionFields.length === 0 || wanted === 0) continue;
-
+    if (sectionFields.length === 0) continue;
     const onPage = Math.max(...sectionFields.map((f) => f.sectionIndex)) + 1;
     const container = sectionFields.find((f) => f.container)?.container ?? null;
+    const initialChildren = container?.children.length ?? 0;
+    sections.push({
+      arrayName,
+      title: sectionFields[0].sectionTitle,
+      container,
+      countEntries: () => onPage + (container ? container.children.length - initialChildren : 0),
+      findAddButton: () =>
+        findAddEntryButton(container) || findAddEntryButton(container?.closest(".ant-card, section, fieldset")),
+    });
+  }
+  return sections;
+}
+
+/**
+ * 简历有 N 段经历、页面只有 M 段时，点 N-M 次对应区块的"添加"按钮，
+ * 每次都等新的一段出现。调用方随后要重新扫描再填写。
+ * @param {RepeatableSection[]|null} [sections] 平台适配器给出的区块；不给就从扫描结果推断
+ * @returns {Promise<{ added: number, results: FillResult[] }>}
+ */
+export async function expandRepeatableSections(fields, matches, profile, sections = null) {
+  let added = 0;
+  const results = [];
+  const done = new Set();
+  for (const section of sections ?? inferSections(fields, matches)) {
+    const { arrayName } = section;
+    const title = REPEATABLE_ARRAYS[arrayName];
+    const wanted = profile?.[arrayName]?.length ?? 0;
+    if (!title || done.has(arrayName) || wanted === 0) continue;
+    done.add(arrayName);
+
+    const onPage = section.countEntries();
     const note = (reason) =>
       results.push({
         fieldId: `add-${arrayName}`,
         label: `${title}（第 ${onPage + 1}~${wanted} 段）`,
-        sectionTitle: sectionFields[0].sectionTitle,
+        sectionTitle: section.title,
         sectionIndex: onPage,
         repeatable: false,
         required: false,
@@ -231,24 +308,22 @@ export async function expandRepeatableSections(fields, matches, profile) {
       });
 
     for (let count = onPage; count < wanted; count += 1) {
-      const button =
-        findAddEntryButton(container) || findAddEntryButton(container?.closest(".ant-card, section, fieldset"));
+      const button = section.findAddButton();
       if (!button) {
         note(`简历有 ${wanted} 段，页面只有 ${count} 段，没找到"添加"按钮，请手动添加后再填一次`);
         break;
       }
-      const before = container.children.length;
       try {
         await clickAddEntryButton(button);
       } catch (error) {
         note(error.message);
         break;
       }
-      if (!(await waitFor(() => container.children.length > before))) {
+      if (!(await waitFor(() => section.countEntries() > count))) {
         note(`点了"${button.textContent.trim()}"但没有出现新的一段`);
         break;
       }
-      await waitForSettled(container, { quietMs: 100, timeout: 1500 });
+      await waitForSettled(section.container, { quietMs: 100, timeout: 1500 });
       added += 1;
     }
   }

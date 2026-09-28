@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Moka 网申页仿真</title>
+    <style>
+      /* 类名带随机哈希，样式也只能按前缀写，和真实 Moka 页面一样。 */
+      body { font: 14px/1.5 system-ui, "PingFang SC", sans-serif; max-width: 820px; margin: 24px auto; color: #222; }
+      .apply-block { border: 1px solid #e8e8e8; border-radius: 6px; padding: 12px 16px; margin-bottom: 16px; }
+      [class*="blockTitle"] { display: flex; justify-content: space-between; font-weight: 600; font-size: 16px; margin-bottom: 8px; }
+      [class*="blockAdd"] { color: #1f6fff; cursor: pointer; font-weight: 400; }
+      .apply-fields { border-top: 1px dashed #eee; padding-top: 8px; margin-top: 8px; }
+      [class*="apply-field-"] { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+      [class*="field-title"] { width: 110px; flex: 0 0 110px; text-align: right; padding-top: 4px; }
+      [class*="required-asterisk"] { color: #f5222d; margin-right: 2px; }
+      [class*="field-content"] { flex: 1; min-width: 0; }
+      [class*="sd-Input-container"] { display: inline-flex; align-items: center; border: 1px solid #d9d9d9; border-radius: 4px; padding: 2px 6px; background: #fff; }
+      [class*="sd-Input-input"] { border: 0; outline: 0; font: inherit; min-width: 40px; width: 100%; background: transparent; }
+      [class*="sd-Textarea-textarea"] { width: 420px; font: inherit; }
+      [class*="sd-Select-wrapper"], [class*="sd-Picker-wrapper"], [class*="sd-Dropdown-trigger"] { position: relative; display: inline-block; margin-right: 6px; }
+      [class*="sd-Select-disabled"] { background: #f5f5f5; }
+      [class*="sd-Input-clear"] { cursor: pointer; color: #999; padding-left: 4px; }
+      [class*="sd-Dropdown-container"] { position: absolute; left: 0; top: 100%; z-index: 10; }
+      [class*="sd-Dropdown-dropdown"] { background: #fff; border: 1px solid #e8e8e8; box-shadow: 0 4px 12px rgba(0,0,0,.12); border-radius: 4px; min-width: 140px; }
+      [class*="sd-Select-menu"] { max-height: 220px; overflow-y: auto; }
+      [class*="sd-Menu-content-item"] { padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+      [class*="sd-Menu-content-item"]:hover { background: #f0f5ff; }
+      [class*="sd-Input-group"], [class*="date-info"] { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+      [class*="menu-wrapper"] { position: absolute; left: 0; top: 100%; z-index: 10; background: #fff; border: 1px solid #e8e8e8; box-shadow: 0 4px 12px rgba(0,0,0,.12); padding: 8px; width: 320px; }
+      [class*="menu-hot"], [class*="menu-tabs"], [class*="menu-content"] { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+      [class*="menu-tab-active"] { color: #1f6fff; font-weight: 600; }
+      [class*="menu-tab"], [class*="menu-item"], [class*="sd-Tag-tag"] { cursor: pointer; padding: 0 4px; }
+      [class*="sd-Tag-tag"] { background: #f5f5f5; border-radius: 3px; }
+      [class*="sd-panal-menu-wrapper"] { position: absolute; left: 0; top: 100%; z-index: 10; background: #fff; border: 1px solid #e8e8e8; box-shadow: 0 4px 12px rgba(0,0,0,.12); padding: 8px; width: 260px; }
+      [class*="sd-basic-selector-year-list"] { max-height: 180px; overflow-y: auto; }
+      [class*="sd-basic-year-panel"], [class*="sd-basic-month-panel"] { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+      [class*="sd-basic-month-panel"] { grid-template-columns: repeat(7, 1fr); }
+      [class*="sd-basic-year-item"], [class*="sd-basic-day-item"], [class*="sd-basic-selector"] span { cursor: pointer; text-align: center; }
+      [class*="sd-Upload-trigger"] { color: #1f6fff; cursor: pointer; }
+      [class*="sd-Button-primary"] { background: #1f6fff; color: #fff; border: 0; border-radius: 4px; padding: 8px 24px; font-size: 15px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="./dist/main.js"></script>
+  </body>
+</html>

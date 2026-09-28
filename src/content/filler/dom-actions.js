@@ -181,8 +181,10 @@ export function hover(element) {
  * 模拟一次真实的鼠标点击：移入 -> 按下 -> 抬起 -> click。
  * 点击前先过 getClickBlockReason 检查，命中黑名单直接抛错，绝不点击。
  * @param {Element} element
+ * @param {{ focus?: boolean }} [options] focus：按下后一定让输入框获得焦点并派发
+ *   focus 事件（Moka 的下拉要靠 mousedown + focus 才打开）
  */
-export async function safeClick(element) {
+export async function safeClick(element, { focus = false } = {}) {
   const blocked = getClickBlockReason(element);
   if (blocked) throw new ClickBlockedError(blocked);
   element.scrollIntoView?.({ block: "nearest", inline: "nearest" });
@@ -191,10 +193,9 @@ export async function safeClick(element) {
   fireMouse(element, "pointerdown", point);
   const notPrevented = fireMouse(element, "mousedown", point);
   // 真实按下鼠标会让可聚焦元素获得焦点（组件主动阻止时除外）。
-  if (notPrevented) {
-    const focusable = element.closest("input, textarea, select, [tabindex], [contenteditable='true']");
-    if (focusable && document.activeElement !== focusable) focusable.focus({ preventScroll: true });
-  }
+  const focusable = element.closest("input, textarea, select, [tabindex], [contenteditable='true']");
+  if (focusable && focus) focusElement(focusable);
+  else if (focusable && notPrevented && document.activeElement !== focusable) focusable.focus({ preventScroll: true });
   fireMouse(element, "pointerup", point);
   fireMouse(element, "mouseup", point);
   fireMouse(element, "click", point);
@@ -278,4 +279,11 @@ export function dispatchInput(element, data) {
 
 export function dispatchChange(element) {
   element.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+/** 获得焦点后把输入框内容换成 text，并派发 input 事件（相当于打字）。 */
+export function typeText(input, text) {
+  focusElement(input);
+  setNativeValue(input, text);
+  dispatchInput(input, text);
 }

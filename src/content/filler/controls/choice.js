@@ -71,7 +71,8 @@ async function fillRadio(group, value, resumeField) {
 }
 
 async function fillCheckboxes(group, value, resumeField) {
-  const values = (Array.isArray(value) ? value : [value]).map(valueToText).filter(Boolean);
+  const list = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[、，,；;\s]+/) : [value];
+  const values = list.map(valueToText).filter(Boolean);
   const texts = choiceItems(group).map((i) => i.text);
   const fieldName = fieldNameOf(resumeField);
   const wanted = new Set();
