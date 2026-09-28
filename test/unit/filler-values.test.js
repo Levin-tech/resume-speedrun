@@ -4,6 +4,7 @@ import {
   isEmptyValue,
   valueToText,
   fieldNameOf,
+  entriesOf,
 } from "../../src/content/filler/values.js";
 
 const profile = {
@@ -92,5 +93,32 @@ describe("isEmptyValue / valueToText", () => {
     expect(valueToText(profile.basic.birthDate)).toBe("2001-05-20");
     expect(valueToText(profile.expectation.cities)).toBe("北京、上海");
     expect(valueToText(resolveResumeValue(profile, "internships[0].dateRange").value)).toBe("2025-07 ~ 至今");
+  });
+});
+
+describe("获奖列表按段取、语言能力按英语等级推断", () => {
+  const withSkills = (skills) => ({ skills: { awards: [], englishLevel: "", ...skills } });
+
+  it("获奖经历在简历里是字符串列表，页面上一段一个奖项", () => {
+    const p = withSkills({ awards: ["国家奖学金", "", "ACM 银牌"] });
+    expect(entriesOf(p, "awards")).toEqual([{ name: "国家奖学金" }, { name: "ACM 银牌" }]);
+    expect(resolveResumeValue(p, "awards[1].name").value).toBe("ACM 银牌");
+    expect(resolveResumeValue(p, "awards[2].name").missingEntry).toBe(true);
+  });
+
+  it("语言类型填英语，听说/读写按英语等级给合理选项并带“需确认”的原因", () => {
+    const p = withSkills({ englishLevel: "CET-6" });
+    expect(resolveResumeValue(p, "derived.languageType")).toEqual({ value: "英语" });
+    const listen = resolveResumeValue(p, "derived.languageListenSpeak");
+    expect(listen.value).toBe("良好");
+    expect(listen.note).toMatch(/CET-6.*确认/);
+    expect(resolveResumeValue(p, "derived.languageReadWrite").value).toBe("熟练");
+    expect(resolveResumeValue(withSkills({ englishLevel: "TEM-8" }), "derived.languageReadWrite").value).toBe("精通");
+  });
+
+  it("没有英语等级时语言能力区块都不填", () => {
+    const p = withSkills({ englishLevel: "无" });
+    expect(resolveResumeValue(p, "derived.languageType").value).toBe("");
+    expect(resolveResumeValue(p, "derived.languageListenSpeak")).toEqual({ value: "" });
   });
 });

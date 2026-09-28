@@ -104,6 +104,19 @@ export const englishLevelSynonyms = {
 };
 
 /** @type {SynonymMap} */
+export const languageProficiencySynonyms = {
+  一般: ["一般", "入门", "基础", "较弱"],
+  良好: ["良好", "较好", "中等", "良"],
+  熟练: ["熟练", "熟练掌握", "优秀"],
+  精通: ["精通", "流利", "母语"],
+};
+
+/** @type {SynonymMap} */
+export const languageTypeSynonyms = {
+  英语: ["英语", "英文", "English"],
+};
+
+/** @type {SynonymMap} */
 export const nationSynonyms = {
   汉族: ["汉族", "汉"],
   壮族: ["壮族", "壮"],
@@ -136,6 +149,9 @@ export function getSynonymMap(fieldName) {
     idType: idTypeSynonyms,
     englishLevel: englishLevelSynonyms,
     nation: nationSynonyms,
+    languageType: languageTypeSynonyms,
+    languageListenSpeak: languageProficiencySynonyms,
+    languageReadWrite: languageProficiencySynonyms,
   };
   return registry[fieldName] ?? null;
 }

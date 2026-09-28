@@ -2,9 +2,10 @@
  * Moka 的 location_info（籍贯、所在地）：只读输入框，mousedown 打开 menu-wrapper 面板，
  * 有"热门地区"标签（sd-Tag）和"省份/城市/县区"三个页签，逐级点选。
  * 简历里只写了"深圳"这种城市名时，先看热门地区，没有再像人一样挨个省份展开找。
+ * 选中的地区和下拉一样显示在 sd-Input-display-value 里（input.value 是空的）。
  */
 
-import { safeClick, waitFor, waitForSettled } from "../dom-actions.js";
+import { safeClick, readShownText, waitFor, waitForSettled } from "../dom-actions.js";
 import { normalizeText, pickBestOption, splitCascaderPath, stripAdminSuffix } from "../option-match.js";
 import { findMokaOverlay, openMokaOverlay, closeMokaOverlay, clearMokaInput, outermost } from "./moka-select.js";
 import { filled, needsConfirmation, skipped, failed, restored, unchanged } from "./results.js";
@@ -131,7 +132,7 @@ export async function fillMokaLocation(input, value) {
   if (input.disabled) return failed("地区输入框是禁用状态");
   const tokens = splitCascaderPath(value);
   const wanted = tokens.join("/");
-  const before = input.value;
+  const before = readShownText(input);
   if (!(await openMokaOverlay(input, PANEL))) return failed("点开地区输入框后没有出现地区面板");
 
   if (tokens.length > 1) await gotoFirstTab(input);
@@ -140,10 +141,11 @@ export async function fillMokaLocation(input, value) {
 
   if (!result) {
     // 挨个省份找的时候页面可能已经记下了点过的省份，找不到就清回原样。
-    if (!before && input.value) await clearMokaInput(input, { what: "地区输入框" });
+    if (!before && readShownText(input)) await clearMokaInput(input, { what: "地区输入框" });
     return skipped(`地区选项里找不到「${wanted}」，没有填`);
   }
-  const now = input.value.trim();
+  await waitFor(() => sameArea(lastSegment(readShownText(input)), result.path.at(-1)), { timeout: 1000 });
+  const now = readShownText(input);
   if (!sameArea(lastSegment(now), result.path.at(-1))) {
     return failed(`选了「${result.path.join("/")}」，但回读到的是「${now || "空"}」`);
   }
@@ -153,13 +155,13 @@ export async function fillMokaLocation(input, value) {
 }
 
 export const mokaLocationControl = {
-  snapshot: (field) => ({ text: field.subElements.input.value }),
+  snapshot: (field) => ({ text: readShownText(field.subElements.input) }),
 
   fill: (field, value) => fillMokaLocation(field.subElements.input, value),
 
   async restore(field, snapshot) {
     const input = field.subElements.input;
-    if (normalizeText(input.value) === normalizeText(snapshot.text)) return unchanged();
+    if (normalizeText(readShownText(input)) === normalizeText(snapshot.text)) return unchanged();
     if (!snapshot.text) {
       const result = await clearMokaInput(input, { what: "地区输入框" });
       await closeMokaOverlay(input, PANEL);
