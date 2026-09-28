@@ -4,23 +4,87 @@
 
 import { scanFormFields, getElementDigest } from "./scanner/scanner.js";
 import { matchFields } from "./matcher/matcher.js";
-import { fillFields } from "./filler/filler.js";
-import { summarizeFillResults, renderReviewPanel } from "./review/review.js";
+import { fillFields, expandRepeatableSections, undoFill } from "./filler/filler.js";
+import { summarizeFillResults, renderReviewPanel, removeReviewPanel } from "./review/review.js";
 import { detectAdapter } from "./adapters/index.js";
+import { migrateResumeProfile } from "../shared/schema/resume.js";
 
 document.documentElement.setAttribute("data-resume-speedrun-injected", "true");
 
-async function runAutoFill(profile) {
+/** 最近一次填写：撤销记录、控件引用（点清单条目时滚动过去用）、清单面板。 */
+let lastFill = null;
+let busy = false;
+
+async function scanAndMatch() {
   const adapter = detectAdapter();
   const fields = scanFormFields(document);
-  const matches = await matchFields(fields, {
-    platform: adapter.id,
-    useAi: false,
-  });
-  const fillResults = await fillFields(fields, matches, profile);
-  const summary = summarizeFillResults(fillResults);
-  renderReviewPanel(summary);
-  return summary;
+  const matches = await matchFields(fields, { platform: adapter.id, useAi: false });
+  return { fields, matches };
+}
+
+function locateField(fieldId) {
+  const element = lastFill?.elements.get(fieldId);
+  if (!element?.isConnected) return;
+  element.scrollIntoView({ block: "center", behavior: "smooth" });
+  element.classList.add("resume-speedrun-highlight");
+  setTimeout(() => element.classList.remove("resume-speedrun-highlight"), 2000);
+}
+
+/** 只把数量和每项状态回给弹窗，不带控件引用，也不带填进去的具体内容。 */
+function toPopupSummary(summary) {
+  return {
+    filled: summary.filled.length,
+    needsConfirmation: summary.needsConfirmation.length,
+    skipped: summary.skipped.length,
+    missingRequired: summary.missingRequired.length,
+  };
+}
+
+async function runAutoFill(rawProfile) {
+  if (busy) return { ok: false, error: "正在处理上一次操作，请稍候" };
+  busy = true;
+  try {
+    const profile = migrateResumeProfile(rawProfile);
+    removeReviewPanel();
+
+    let { fields, matches } = await scanAndMatch();
+    // 简历经历段数比页面多时，先点"添加"补齐区块，再重新扫描匹配。
+    const expansion = await expandRepeatableSections(fields, matches, profile);
+    if (expansion.added > 0) ({ fields, matches } = await scanAndMatch());
+
+    const journal = [];
+    const results = await fillFields(fields, matches, profile, { journal });
+    results.push(...expansion.results);
+
+    const summary = summarizeFillResults(results);
+    lastFill = {
+      journal,
+      elements: new Map(fields.map((f) => [f.id, f.element])),
+      panel: null,
+    };
+    lastFill.panel = renderReviewPanel(summary, { onUndo: runUndo, onLocate: locateField });
+    return { ok: true, summary: toPopupSummary(summary) };
+  } finally {
+    busy = false;
+  }
+}
+
+async function runUndo() {
+  if (!lastFill) return { ok: false, error: "这个页面还没有填写过" };
+  if (busy) return { ok: false, error: "正在处理上一次操作，请稍候" };
+  busy = true;
+  try {
+    const results = await undoFill(lastFill.journal);
+    lastFill.journal = [];
+    lastFill.panel?.showUndoResults(results);
+    return {
+      ok: true,
+      restored: results.filter((r) => r.status === "restored").length,
+      failed: results.filter((r) => r.status === "failed").length,
+    };
+  } finally {
+    busy = false;
+  }
 }
 
 async function runScanDiagnostics() {
@@ -42,6 +106,9 @@ async function runScanDiagnostics() {
       required: field.required,
       options: field.options,
       placeholder: field.placeholder,
+      parts: field.subElements
+        ? Object.fromEntries(Object.entries(field.subElements).map(([k, v]) => [k, !!v]))
+        : null,
       resumeField: match?.resumeField || null,
       matchedBy: match?.matchedBy || "none",
       confidence: match?.confidence || 0,
@@ -110,9 +177,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return undefined;
   }
   if (message?.type === "resume-speedrun:start-autofill") {
-    runAutoFill(message.profile).then((summary) =>
-      sendResponse({ ok: true, summary })
-    );
+    runAutoFill(message.profile)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
+    return true;
+  }
+  if (message?.type === "resume-speedrun:undo-fill") {
+    runUndo()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message ?? error) }));
     return true;
   }
   if (message?.type === "resume-speedrun:scan-diagnostics") {

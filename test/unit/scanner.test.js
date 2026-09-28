@@ -72,3 +72,54 @@ describe("必填检测", () => {
     expect(input.getAttribute("aria-required")).toBe("true");
   });
 });
+
+describe("拆分式年月下拉组与“至今”（真实 scanFormFields）", () => {
+  it("有 date-range 类名的容器：嵌套两层也只识别成一组，并找到“至今”", async () => {
+    const { scanFormFields } = await import("../../src/content/scanner/scanner.js");
+    const doc = createTestDOM(`
+      <div class="field date-range">
+        <label class="field-label">起止时间</label>
+        <div class="date-range-control">
+          <div class="ant-select"><span class="ant-select-selection-placeholder">起始年</span></div>
+          <div class="ant-select"><span class="ant-select-selection-placeholder">起始月</span></div>
+          <div class="ant-select"><span class="ant-select-selection-placeholder">结束年</span></div>
+          <div class="ant-select"><span class="ant-select-selection-placeholder">结束月</span></div>
+          <label class="ant-checkbox-wrapper"><input type="checkbox" />至今</label>
+        </div>
+      </div>
+    `);
+    const fields = scanFormFields(doc);
+    const groups = fields.filter((f) => f.controlType === "date-range-group");
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("起止时间");
+    expect(groups[0].subElements.isCurrent?.textContent.trim()).toBe("至今");
+    // 组里的 4 个下拉不再单独算作普通下拉
+    expect(fields.filter((f) => f.controlType === "select")).toHaveLength(0);
+  });
+
+  it("没有类名时，按下拉提示文字里的“年/月”识别；普通的 4 个下拉不误判", async () => {
+    const { scanFormFields } = await import("../../src/content/scanner/scanner.js");
+    const doc = createTestDOM(`
+      <div class="ant-form-item">
+        <div class="ant-form-item-label"><label>在校时间</label></div>
+        <select><option>年</option><option>2020</option></select>
+        <select><option>月</option><option>1</option></select>
+        <select><option>年</option><option>2024</option></select>
+        <select><option>月</option><option>6</option></select>
+        <label><input type="checkbox" />目前在读</label>
+      </div>
+      <div class="ant-form-item">
+        <div class="ant-form-item-label"><label>偏好</label></div>
+        <select><option>甲</option></select><select><option>乙</option></select>
+        <select><option>丙</option></select><select><option>丁</option></select>
+      </div>
+    `);
+    const fields = scanFormFields(doc);
+    const groups = fields.filter((f) => f.controlType === "date-range-group");
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("在校时间");
+    expect(groups[0].subElements.isCurrent).toBeTruthy();
+    expect(fields.filter((f) => f.controlType === "select")).toHaveLength(4);
+    expect(fields.map((f) => f.id)).toEqual(fields.map((_, i) => `scan-${i + 1}`));
+  });
+});

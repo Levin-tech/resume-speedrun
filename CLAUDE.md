@@ -34,10 +34,12 @@ Excel。所有数据只存在浏览器本地（`chrome.storage.local`），不�
 - **平台适配器**：每个网站一个文件放在 `src/content/adapters/`，必须
   实现 `adapter-interface.js` 里定义的 `detect()` / `getFieldSelectors()`
   形状；找不到平台专属规则时统一 fallback 到 `generic.js`。
-- **绝不点击的按钮**：`src/content/filler/filler.js` 里的
-  `SUBMIT_LIKE_BLACKLIST` 是硬性黑线——任何"提交/保存/下一步/确认/
-  投递/删除"类文案的按钮，filler 都不允许点击，唯一允许点击的"新增"
-  类按钮也要先检查不在这个黑名单里。
+- **绝不点击的按钮**：`SUBMIT_LIKE_BLACKLIST`（定义在
+  `src/content/filler/dom-actions.js`，`filler.js` 里重新导出）是硬性
+  黑线——任何"提交/保存/下一步/确认/投递/删除"类文案的按钮，filler 都
+  不允许点击，表单里会触发提交的按钮也不点。filler 里所有点击都必须走
+  `safeClick()`，它在点击前统一做这个检查；唯一允许点击的"新增"类按钮
+  也一样。
 - **填写要像人在操作**：不要直接改 DOM `value` 走捷径，要走真实的鼠标
   /键盘事件序列（点开下拉 -> 等浮层出现 -> 点选项 -> 校验 -> 关闭浮层），
   并且同一时间只处理一个控件，等上一个浮层关闭再处理下一个，避免浮层
@@ -65,7 +67,8 @@ src/
   content/
     scanner/        扫描页面控件
     matcher/        识别控件对应简历哪个字段
-    filler/         实际填写（模拟人工操作）
+    filler/         实际填写（模拟人工操作）：filler.js 串行调度 + 撤销，
+                    dom-actions.js 事件/等待/点击检查，controls/ 各类控件
     adapters/       平台适配器（moka.js、generic.js……）
     review/         填后检查清单 UI
     content.js      内容脚本入口，串起上面几个模块
@@ -86,6 +89,12 @@ scripts/            esbuild 构建脚本
 
 ## 当前阶段
 
-第 0 阶段（搭架子）：模块接口和目录结构已经就位，大部分函数体是
-占位实现（`TODO(第 1 阶段)` 注释标出了要做什么）。后续阶段按平台
-逐个实现 scanner/matcher/filler 的真实逻辑。
+第 3 阶段（填写引擎）已完成：在 `test/fixtures` 测试页上能按识别结果
+逐项填写文本框、下拉、可搜索下拉、日期、拆分年月下拉 +"至今"、城市
+级联、单选多选，自动补齐多段经历，给出检查清单并支持撤销。
+
+已知限制：单选框一旦选中，页面本身就没有"取消选择"的操作，撤销时
+没法还原成"未选"，会在清单里标出来请用户手动检查；自动点"添加"加出
+来的经历区块撤销后保留为空白（插件不点删除）。
+
+后续：按平台（Moka、北森、飞书……）补适配器、接入 AI 兜底、投递记录。
