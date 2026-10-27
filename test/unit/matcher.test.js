@@ -198,6 +198,95 @@ describe("matchFields", () => {
     ]);
   });
 
+  describe("真实 Moka 页面上发现的映射问题", () => {
+    const f = (label, sectionTitle, sectionIndex = 0, controlType = "text") => ({
+      id: `${sectionTitle}-${sectionIndex}-${label}`,
+      label,
+      controlType,
+      sectionTitle,
+      sectionIndex,
+      container: sectionTitle === "个人信息" || sectionTitle === "求职意向" ? null : {},
+    });
+    const match = async (fields) => {
+      const results = await matchFields(fields, { platform: "moka", useAi: false });
+      return results.map((r) => (r.unavailable ? "信息库无此项" : r.resumeField));
+    };
+
+    it("经历里的公司规模、公司性质不是公司名称（信息库无此项）", async () => {
+      expect(
+        await match([
+          f("公司名称", "工作经历"),
+          f("公司规模", "工作经历", 0, "select"),
+          f("公司性质", "工作经历", 0, "select"),
+          f("企业性质", "实习经历", 1, "select"),
+        ])
+      ).toEqual(["workExperiences[0].company", "信息库无此项", "信息库无此项", "信息库无此项"]);
+    });
+
+    it("经历里的所在行业不用求职意向里的行业；求职意向里的照旧", async () => {
+      expect(
+        await match([
+          f("所在行业", "工作经历", 0, "select"),
+          f("所在行业", "实习经历", 1, "select"),
+          f("所在行业", "项目经验", 0, "select"),
+          f("所在行业", "求职意向", 0, "select"),
+          f("期望行业", "求职意向", 0, "select"),
+        ])
+      ).toEqual([
+        "信息库无此项",
+        "信息库无此项",
+        "信息库无此项",
+        "expectation.currentIndustry",
+        "expectation.expectedIndustry",
+      ]);
+    });
+
+    it("工作/实习的“工作职责”是那段经历的工作内容", async () => {
+      expect(
+        await match([f("工作职责", "工作经历", 0, "textarea"), f("工作职责", "实习经历", 1, "textarea")])
+      ).toEqual(["workExperiences[0].description", "internships[1].description"]);
+    });
+
+    it("项目的“职责”是项目角色，“项目中职责”“项目描述”是项目描述", async () => {
+      expect(
+        await match([
+          f("职责", "项目经验", 0),
+          f("项目中职责", "项目经验", 0, "textarea"),
+          f("项目描述", "项目经验", 1, "textarea"),
+          f("项目角色", "项目经验", 1),
+        ])
+      ).toEqual(["projects[0].role", "projects[0].description", "projects[1].description", "projects[1].role"]);
+    });
+
+    it("获奖经历区块的奖项名称按段对应获奖列表；获奖时间信息库没有", async () => {
+      expect(
+        await match([
+          f("奖项名称", "获奖经历", 0),
+          f("奖项名称", "获奖经历", 1),
+          f("获奖时间", "获奖经历", 1, "year-month"),
+          // 别的网站上"获奖经历"只是一个大文本框：还是填整个获奖列表
+          { ...f("获奖经历", "其他信息", 0, "textarea"), container: null },
+        ])
+      ).toEqual(["awards[0].name", "awards[1].name", "信息库无此项", "skills.awards"]);
+    });
+
+    it("语言能力区块：语言类型、听说、读写，只填第 1 段", async () => {
+      expect(
+        await match([
+          f("语言类型", "语言能力", 0, "select"),
+          f("听说能力", "语言能力", 0, "select"),
+          f("读写能力", "语言能力", 0, "select"),
+          f("语言类型", "语言能力", 1, "select"),
+        ])
+      ).toEqual(["derived.languageType", "derived.languageListenSpeak", "derived.languageReadWrite", null]);
+    });
+
+    it("获奖经历区块对应 awards", () => {
+      expect(detectSectionFromTitle("获奖经历")).toBe("award");
+      expect(planSectionArrays(["获奖经历"], null).award).toBe("awards");
+    });
+  });
+
   it("没把握的字段标记为 none", async () => {
     const fields = [
       { id: "f1", label: "某个完全未知的字段", controlType: "text", sectionTitle: "", sectionIndex: 0 },

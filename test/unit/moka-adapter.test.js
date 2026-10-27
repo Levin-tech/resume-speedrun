@@ -34,6 +34,7 @@ const MOKA_HTML = `
     <div class="apply-block">
       <div class="blockTitle-3Fq9x"><span class="blockName-a1B2c">实习经历</span><div class="blockAdd-8Hj3k"><i>+</i><span>添加</span></div></div>
       <div class="apply-fields">
+        <div class="fieldsHeader-2Wx9q"><span class="fieldsDelete-5Rt1y" id="delete-0"><i>🗑</i> 删除本条</span></div>
         <div class="apply-field-Q2iJ7AtQGX string_info"><div class="title-Zx81k">公司名称</div><label class="sd-Input-container-1aB2c"><input class="sd-Input-input-10L0t"></label></div>
         <div class="apply-field-Q2iJ7AtQGX date_info full-width-field">
           <div class="title-Zx81k">起止时间</div>
@@ -140,6 +141,25 @@ describe("mokaAdapter.getRepeatableSections", () => {
     expect(sections.map((s) => [s.title, s.countEntries(), s.findAddButton()?.textContent.trim()])).toEqual([
       ["实习经历", 2, "添加"],
       ["项目经验", 0, "+ 添加"],
+    ]);
+  });
+});
+
+describe("mokaAdapter 每段的“删除本条”", () => {
+  it("listEntries 给出每一段，findDeleteButton 只在这一段里找“删除本条”", () => {
+    const [internship] = mokaAdapter.getRepeatableSections(setup());
+    const [first, second] = internship.listEntries();
+    expect(internship.listEntries()).toHaveLength(2);
+    expect(internship.findDeleteButton(first).closest("#delete-0")).not.toBeNull();
+    expect(internship.findDeleteButton(second)).toBeNull();
+  });
+
+  it("“删除本条”不会被当成字段，也不影响字段标签", () => {
+    const fields = mokaAdapter.scanFields(setup());
+    expect(fields.filter((f) => f.sectionTitle === "实习经历").map((f) => f.label)).toEqual([
+      "公司名称",
+      "起止时间",
+      "公司名称",
     ]);
   });
 });

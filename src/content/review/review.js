@@ -95,7 +95,8 @@ const STYLE = `
   .title { font-weight: 600; word-break: break-all; }
   .required { color: #cf1322; font-size: 11px; margin-left: 4px; font-weight: 400; }
   .detail { color: #595959; font-size: 12px; word-break: break-all; }
-  footer { display: flex; gap: 8px; padding: 8px 12px 12px; border-top: 1px solid #f0f0f0; }
+  footer { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 12px 12px; border-top: 1px solid #f0f0f0; }
+  .footnote { flex-basis: 100%; color: #8c8c8c; font-size: 12px; }
   footer button { flex: 1; padding: 6px; border-radius: 6px; border: 1px solid #d9d9d9; background: #fff; cursor: pointer; font: inherit; }
   footer button:disabled { color: #bfbfbf; cursor: default; }
 `;
@@ -139,8 +140,9 @@ function renderItem(result, onLocate, { undo = false } = {}) {
 /**
  * 在页面上渲染检查清单悬浮面板。
  * @param {ReviewSummary} summary
- * @param {{ onUndo?: () => Promise<any>, onLocate?: (fieldId: string) => void }} [handlers]
- * @returns {{ showUndoResults: (results: any[]) => void, root: ShadowRoot }}
+ * @param {{ onUndo?: () => Promise<any>, onLocate?: (fieldId: string) => void, footnote?: string }} [handlers]
+ *   footnote：清单底部的平台提示（如 Moka 会自动保存草稿），撤销后也一直显示
+ * @returns {{ showUndoResults: (results: any[], options?: { untrackedAdded?: number }) => void, root: ShadowRoot }}
  */
 export function renderReviewPanel(summary, handlers = {}) {
   removeReviewPanel();
@@ -191,16 +193,27 @@ export function renderReviewPanel(summary, handlers = {}) {
     ]),
     ...notices,
     list,
-    el("footer", {}, [undoButton]),
+    el("footer", {}, [
+      undoButton,
+      handlers.footnote ? el("div", { class: "footnote", "data-role": "draft-notice", text: handlers.footnote }) : null,
+    ]),
   ]);
   root.append(panel);
   document.documentElement.append(host);
 
   return {
     root,
-    showUndoResults(undoResults) {
+    showUndoResults(undoResults, { untrackedAdded = 0 } = {}) {
       const failedItems = undoResults.filter((r) => r.status === "failed");
       const restoredCount = undoResults.filter((r) => r.status === "restored").length;
+      const deletedCount = undoResults.filter((r) => r.controlType === "added-entry" && r.status === "restored").length;
+      const parts = [
+        failedItems.length
+          ? "已撤销本次填写。下面这些项没法自动还原，请手动检查。"
+          : "已撤销本次填写，所有填过的项都恢复了原样。",
+      ];
+      if (deletedCount) parts.push(`插件本次自动添加的 ${deletedCount} 段经历已删除。`);
+      if (untrackedAdded) parts.push(`另有 ${untrackedAdded} 段自动添加的经历区块保留为空白（插件不会点删除），请手动删除。`);
       undoButton.textContent = "已撤销";
       root.querySelector(".counts").replaceChildren(
         el("span", { class: "chip filled", "data-count": "restored", text: `已还原 ${restoredCount}` }),
@@ -211,9 +224,7 @@ export function renderReviewPanel(summary, handlers = {}) {
         el("div", {
           class: failedItems.length ? "notice warn" : "notice",
           "data-role": "undo-notice",
-          text: failedItems.length
-            ? "已撤销本次填写。下面这些项没法自动还原，请手动检查；自动添加的经历区块会保留为空白（插件不会点删除）。"
-            : "已撤销本次填写，所有填过的项都恢复了原样；自动添加的经历区块会保留为空白（插件不会点删除）。",
+          text: parts.join(""),
         })
       );
       list.replaceChildren(...failedItems.map((r) => renderItem(r, handlers.onLocate, { undo: true })));

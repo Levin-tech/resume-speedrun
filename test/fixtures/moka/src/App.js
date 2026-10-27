@@ -1,7 +1,8 @@
 // Moka 网申页仿真：div.apply-blocks > div.apply-block（区块）> [class*=blockTitle]
 // > div.apply-fields（一段经历）> div.apply-field（一个字段，第二个类名是字段类型）。
 // 字段类型、组件类名、浮层位置都照实测的 Moka 页面复刻，见 docs/platforms/moka.md。
-import { defineComponent, h, reactive } from "vue";
+// 可重复区块的每一段顶上有"删除本条"；表单草稿自动存在 localStorage 的 apply-draft-* 里。
+import { defineComponent, h, reactive, watch } from "vue";
 import { cx, SdInput, SdTextarea, SdSelect, SdSuggest, SdCheckbox, SdDayPicker, SdLocation, SdUpload } from "./sd.js";
 import {
   GENDER_OPTIONS,
@@ -12,6 +13,10 @@ import {
   DEGREE_OPTIONS,
   CITY_OPTIONS,
   INDUSTRY_OPTIONS,
+  COMPANY_SIZE_OPTIONS,
+  COMPANY_NATURE_OPTIONS,
+  LANGUAGE_OPTIONS,
+  PROFICIENCY_OPTIONS,
   PHONE_CODE_OPTIONS,
   ID_TYPE_OPTIONS,
   YEAR_OPTIONS,
@@ -24,6 +29,8 @@ import {
   createWorkEntry,
   createInternshipEntry,
   createProjectEntry,
+  createAwardEntry,
+  createLanguageEntry,
 } from "./data.js";
 
 function field({ type, label, required = false, fullWidth = false, id }, content) {
@@ -33,7 +40,7 @@ function field({ type, label, required = false, fullWidth = false, id }, content
   ]);
 }
 
-function block({ key, title, onAdd }, groups) {
+function block({ key, title, onAdd, onDelete }, groups) {
   return h("div", { class: "apply-block", "data-fixture": `block-${key}` }, [
     h("div", { class: cx("blockTitle") }, [
       h("span", { class: cx("blockName") }, title),
@@ -44,7 +51,21 @@ function block({ key, title, onAdd }, groups) {
           ])
         : null,
     ]),
-    ...groups.map((fields, index) => h("div", { class: "apply-fields", key: index }, fields)),
+    ...groups.map((fields, index) =>
+      h("div", { class: "apply-fields", key: index }, [
+        onDelete
+          ? h("div", { class: cx("fieldsHeader") }, [
+              h("span", { class: cx("fieldsIndex") }, `第 ${index + 1} 条`),
+              h(
+                "span",
+                { class: cx("fieldsDelete"), onClick: () => onDelete(index), "data-fixture": `delete-${key}-${index}` },
+                [h("i", { class: cx("icon-delete") }, "🗑"), h("span", null, "删除本条")]
+              ),
+            ])
+          : null,
+        ...fields,
+      ])
+    ),
   ]);
 }
 
@@ -164,7 +185,9 @@ export default defineComponent({
       work: [createWorkEntry()],
       internships: [createInternshipEntry()],
       projects: [],
-      other: { languageAbility: "", skills: "", hobbies: "", selfDescription: "", awards: "", agreed: false },
+      languages: [createLanguageEntry()],
+      awards: [createAwardEntry()],
+      other: { skills: "", hobbies: "", selfDescription: "", agreed: false },
       submitted: false,
     });
 
@@ -172,7 +195,8 @@ export default defineComponent({
     // 独立的 JS 世界，看不到这个对象。
     const counters = {
       submitClicks: 0,
-      addClicks: { education: 0, work: 0, internship: 0, project: 0 },
+      addClicks: { education: 0, work: 0, internship: 0, project: 0, language: 0, award: 0 },
+      deleteClicks: { education: 0, work: 0, internship: 0, project: 0, language: 0, award: 0 },
       suggestPicks: [],
     };
     document.addEventListener(
@@ -184,9 +208,16 @@ export default defineComponent({
     );
     window.__fixture = { counters, snapshot: () => toPlain(state) };
 
+    // 真实 Moka 会把填到一半的表单自动存成草稿（localStorage 里 apply-draft 开头的键）。
+    watch(state, () => localStorage.setItem("apply-draft-fixture-job", JSON.stringify(state)), { deep: true });
+
     const adder = (key, list, create) => () => {
       counters.addClicks[key] += 1;
       list.push(create());
+    };
+    const deleter = (key, list) => (index) => {
+      counters.deleteClicks[key] += 1;
+      list.splice(index, 1);
     };
 
     const basic = state.basic;
@@ -207,7 +238,11 @@ export default defineComponent({
                 withPrefix(basic, "phoneCode", PHONE_CODE_OPTIONS, "phone")
               ),
               field({ type: "string_info", label: "邮箱", required: true, id: "email" }, text(basic, "email")),
-              field({ type: "Select", label: "性别", required: true, id: "gender" }, select(basic, "gender", GENDER_OPTIONS)),
+              // 必填的单选下拉没有清空按钮：选了就清不掉（撤销时要提示用户手动处理）。
+              field(
+                { type: "Select", label: "性别", required: true, id: "gender" },
+                select(basic, "gender", GENDER_OPTIONS, { clearable: false })
+              ),
               field(
                 { type: "day_info", label: "出生日期", required: true, id: "birth-date" },
                 h(SdDayPicker, { ...bind(basic, "birthDate"), minYear: 1950, maxYear: 2026 })
@@ -250,7 +285,7 @@ export default defineComponent({
             [
               field(
                 { type: "Select", label: "意向工作城市", required: true, id: "intention-city" },
-                select(intention, "city", CITY_OPTIONS)
+                select(intention, "city", CITY_OPTIONS, { remote: true })
               ),
               field({ type: "string_info", label: "期望职位", id: "position" }, text(intention, "position")),
               field(
@@ -270,7 +305,12 @@ export default defineComponent({
           ]),
 
           block(
-            { key: "education", title: "教育背景", onAdd: adder("education", state.education, createEducationEntry) },
+            {
+              key: "education",
+              title: "教育背景",
+              onAdd: adder("education", state.education, createEducationEntry),
+              onDelete: deleter("education", state.education),
+            },
             state.education.map((entry, i) => [
               field(
                 { type: "string_info", label: "学校名称", required: true, id: `school-${i}` },
@@ -289,50 +329,98 @@ export default defineComponent({
           ),
 
           block(
-            { key: "work", title: "工作经历", onAdd: adder("work", state.work, createWorkEntry) },
+            {
+              key: "work",
+              title: "工作经历",
+              onAdd: adder("work", state.work, createWorkEntry),
+              onDelete: deleter("work", state.work),
+            },
             state.work.map((entry, i) => [
               field({ type: "string_info", label: "公司名称", id: `work-company-${i}` }, text(entry, "company")),
               field({ type: "string_info", label: "职位名称", id: `work-title-${i}` }, text(entry, "title")),
+              field(
+                { type: "Select", label: "公司规模", id: `work-company-size-${i}` },
+                select(entry, "companySize", COMPANY_SIZE_OPTIONS)
+              ),
+              field(
+                { type: "Select", label: "公司性质", id: `work-company-nature-${i}` },
+                select(entry, "companyNature", COMPANY_NATURE_OPTIONS)
+              ),
+              field({ type: "Select", label: "所在行业", id: `work-industry-${i}` }, select(entry, "industry", INDUSTRY_OPTIONS)),
               field(
                 { type: "date_info", label: "起止时间", fullWidth: true, id: `work-range-${i}` },
                 dateRange(entry, { withCurrent: true })
               ),
               field({ type: "string_info", label: "汇报对象", id: `work-report-to-${i}` }, text(entry, "reportTo")),
               field({ type: "text_info", label: "离职原因", id: `work-leave-reason-${i}` }, textarea(entry, "leaveReason")),
-              field({ type: "text_info", label: "工作描述", id: `work-description-${i}` }, textarea(entry, "description")),
+              field({ type: "text_info", label: "工作职责", id: `work-description-${i}` }, textarea(entry, "description")),
             ])
           ),
 
           block(
-            { key: "internship", title: "实习经历", onAdd: adder("internship", state.internships, createInternshipEntry) },
+            {
+              key: "internship",
+              title: "实习经历",
+              onAdd: adder("internship", state.internships, createInternshipEntry),
+              onDelete: deleter("internship", state.internships),
+            },
             state.internships.map((entry, i) => [
               field({ type: "string_info", label: "公司名称", id: `intern-company-${i}` }, text(entry, "company")),
               field({ type: "string_info", label: "职位名称", id: `intern-title-${i}` }, text(entry, "title")),
               field(
+                { type: "Select", label: "所在行业", id: `intern-industry-${i}` },
+                select(entry, "industry", INDUSTRY_OPTIONS)
+              ),
+              field(
                 { type: "date_info", label: "起止时间", fullWidth: true, id: `intern-range-${i}` },
                 dateRange(entry, { withCurrent: true })
               ),
-              field({ type: "text_info", label: "实习描述", id: `intern-description-${i}` }, textarea(entry, "description")),
+              field({ type: "text_info", label: "工作职责", id: `intern-description-${i}` }, textarea(entry, "description")),
             ])
           ),
 
           // 项目经验一开始一段都没有，只有"添加"按钮。
           block(
-            { key: "project", title: "项目经验", onAdd: adder("project", state.projects, createProjectEntry) },
+            {
+              key: "project",
+              title: "项目经验",
+              onAdd: adder("project", state.projects, createProjectEntry),
+              onDelete: deleter("project", state.projects),
+            },
             state.projects.map((entry, i) => [
               field({ type: "string_info", label: "项目名称", id: `project-name-${i}` }, text(entry, "name")),
-              field({ type: "string_info", label: "项目角色", id: `project-role-${i}` }, text(entry, "role")),
+              field({ type: "string_info", label: "职责", id: `project-role-${i}` }, text(entry, "role")),
               field(
                 { type: "date_info", label: "起止时间", fullWidth: true, id: `project-range-${i}` },
                 dateRange(entry, { withCurrent: true })
               ),
+              field({ type: "text_info", label: "项目中职责", id: `project-duty-${i}` }, textarea(entry, "duty")),
               field({ type: "text_info", label: "项目描述", id: `project-description-${i}` }, textarea(entry, "description")),
             ])
           ),
 
-          block({ key: "language", title: "语言能力" }, [
-            [field({ type: "text_info", label: "语言能力", id: "language" }, textarea(other, "languageAbility"))],
-          ]),
+          block(
+            {
+              key: "language",
+              title: "语言能力",
+              onAdd: adder("language", state.languages, createLanguageEntry),
+              onDelete: deleter("language", state.languages),
+            },
+            state.languages.map((entry, i) => [
+              field(
+                { type: "Select", label: "语言类型", id: `language-type-${i}` },
+                select(entry, "language", LANGUAGE_OPTIONS)
+              ),
+              field(
+                { type: "Select", label: "听说能力", id: `language-listen-${i}` },
+                select(entry, "listenSpeak", PROFICIENCY_OPTIONS)
+              ),
+              field(
+                { type: "Select", label: "读写能力", id: `language-read-${i}` },
+                select(entry, "readWrite", PROFICIENCY_OPTIONS)
+              ),
+            ])
+          ),
 
           block({ key: "self", title: "自我描述" }, [
             [
@@ -342,9 +430,17 @@ export default defineComponent({
             ],
           ]),
 
-          block({ key: "awards", title: "获奖经历" }, [
-            [field({ type: "text_info", label: "获奖经历", id: "awards" }, textarea(other, "awards"))],
-          ]),
+          block(
+            {
+              key: "award",
+              title: "获奖经历",
+              onAdd: adder("award", state.awards, createAwardEntry),
+              onDelete: deleter("award", state.awards),
+            },
+            state.awards.map((entry, i) => [
+              field({ type: "string_info", label: "奖项名称", id: `award-name-${i}` }, text(entry, "name")),
+            ])
+          ),
 
           block({ key: "statement", title: "个人信息保护声明" }, [
             [

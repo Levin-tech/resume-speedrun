@@ -2,9 +2,10 @@
  * Moka 的 day_info（出生日期）：只读输入框，打开后是 sd-panal-menu-wrapper 面板
  * （Moka 自己就拼成 panal）：顶部年份选择 sd-basic-selector-year（如"1990年"，
  * 点开是年份列表），下面是月份 sd-basic-year-item（一月…十二月），点月份后再点日。
+ * 年份列表默认停在 1990 年附近那一页，目标年份不在这一页时要翻页（或滚动）找。
  */
 
-import { safeClick, clickOutside, waitFor, waitForSettled } from "../dom-actions.js";
+import { safeClick, clickOutside, readShownText, waitFor, waitForSettled } from "../dom-actions.js";
 import { firstNumber, parseDateParts } from "../option-match.js";
 import { findMokaOverlay, openMokaOverlay, closeMokaOverlay, clearMokaInput } from "./moka-select.js";
 import { filled, needsConfirmation, failed, restored, unchanged } from "./results.js";
@@ -44,6 +45,64 @@ async function clickAndSettle(input, element) {
   if (panel) await waitForSettled(panel, { quietMs: 60, timeout: 800 });
 }
 
+const YEAR_TEXT = /^(\d{4})\s*年?$/;
+const MAX_PAGES = 30;
+
+/** 面板里现在能看到的年份选项（不含顶部显示当前年份的那个）。 */
+function visibleYears(panel) {
+  return leavesWithText(panel, (text) => YEAR_TEXT.test(text), yearSelector(panel)).map((el) => ({
+    el,
+    year: firstNumber(ownText(el)),
+  }));
+}
+
+/** 往前/往后翻一页的箭头：类名带 prev/next/left/right，或文字是 ‹ › « » < >。 */
+function pageArrow(panel, forward) {
+  const words = forward ? /next|right|forward/i : /prev|left|back/i;
+  const glyphs = forward ? /^[›»>→]+$/ : /^[‹«<←]+$/;
+  return Array.from(panel?.querySelectorAll("*") ?? []).find(
+    (el) =>
+      !/disabled/i.test(el.className) &&
+      el.children.length === 0 &&
+      (glyphs.test(ownText(el)) || (words.test(el.className) && !YEAR_TEXT.test(ownText(el))))
+  );
+}
+
+function scrollBoxOf(el) {
+  for (let node = el?.parentElement; node; node = node.parentElement) {
+    if (node.scrollHeight > node.clientHeight + 2) return node;
+    if (/menu-wrapper/.test(node.className)) break;
+  }
+  return null;
+}
+
+/** 目标年份不在可见范围时翻页（没有翻页箭头就滚动年份列表），最多翻 MAX_PAGES 次。 */
+async function revealYear(input, year) {
+  for (let page = 0; page <= MAX_PAGES; page += 1) {
+    const years = visibleYears(panelOf(input));
+    const hit = years.find((y) => y.year === year);
+    if (hit || years.length === 0) return hit?.el ?? null;
+    const forward = year > Math.max(...years.map((y) => y.year));
+    const before = years.map((y) => y.year).join(",");
+    const arrow = pageArrow(panelOf(input), forward);
+    if (arrow) {
+      await clickAndSettle(input, arrow);
+    } else {
+      const box = scrollBoxOf(years[0].el);
+      if (!box) return null;
+      box.scrollTop += (forward ? 1 : -1) * Math.max(box.clientHeight - 20, 20);
+      box.dispatchEvent(new Event("scroll"));
+    }
+    const moved = await waitFor(() => visibleYears(panelOf(input)).map((y) => y.year).join(",") !== before, {
+      timeout: 800,
+    });
+    const scrolledInto = visibleYears(panelOf(input)).find((y) => y.year === year);
+    if (scrolledInto) return scrolledInto.el;
+    if (!moved) return null;
+  }
+  return null;
+}
+
 async function pickYear(input, year) {
   const shownYear = () => {
     const selector = yearSelector(panelOf(input));
@@ -53,9 +112,11 @@ async function pickYear(input, year) {
   if (!selector) return "面板上没找到年份选择";
   if (shownYear() === year) return null;
   await clickAndSettle(input, selector);
-  const isYear = (text) => text === `${year}年` || text === String(year);
-  const option = await waitFor(() => leavesWithText(panelOf(input), isYear, yearSelector(panelOf(input)))[0]);
-  if (!option) return `年份列表里没有 ${year} 年`;
+  if (!(await waitFor(() => visibleYears(panelOf(input)).length > 0, { timeout: 1500 }))) {
+    return "点了年份但没有出现年份列表";
+  }
+  const option = await revealYear(input, year);
+  if (!option) return `年份列表里翻页也没找到 ${year} 年`;
   await clickAndSettle(input, option);
   const ok = await waitFor(() => shownYear() === year, { timeout: 1000 });
   return ok ? null : `点了 ${year} 年但面板上的年份没变`;
@@ -87,21 +148,23 @@ export async function fillMokaBirthday(input, date) {
   await safeClick(day);
   if (!(await waitFor(() => !panelOf(input), { timeout: 1500 }))) await clickOutside();
 
-  const [y, m, d] = parseDateParts(input.value);
+  await waitFor(() => readShownText(input), { timeout: 1000 });
+  const now = readShownText(input);
+  const [y, m, d] = parseDateParts(now);
   if (y !== target.year || m !== target.month || d !== target.day) {
-    return failed(`没能选中 ${wanted}，回读到的是「${input.value || "空"}」`);
+    return failed(`没能选中 ${wanted}，回读到的是「${now || "空"}」`);
   }
-  return date.month && date.day ? filled(input.value) : needsConfirmation(input.value, "简历里没有具体到日，缺的部分按 1 月/1 号填了");
+  return date.month && date.day ? filled(now) : needsConfirmation(now, "简历里没有具体到日，缺的部分按 1 月/1 号填了");
 }
 
 export const mokaBirthdayControl = {
-  snapshot: (field) => ({ text: field.subElements.input.value }),
+  snapshot: (field) => ({ text: readShownText(field.subElements.input) }),
 
   fill: (field, value) => fillMokaBirthday(field.subElements.input, value),
 
   async restore(field, snapshot) {
     const input = field.subElements.input;
-    if (input.value === snapshot.text) return unchanged();
+    if (readShownText(input) === snapshot.text) return unchanged();
     if (!snapshot.text) {
       const result = await clearMokaInput(input, { what: "日期输入框" });
       await closeMokaOverlay(input, PANEL);

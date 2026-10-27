@@ -3,6 +3,8 @@
  * 从简历里取值，以及把取到的值转成适合填进页面的文字。
  */
 
+import { ENGLISH_LEVEL_PROFICIENCY } from "../../shared/options-data/standard-values.js";
+
 const ARRAY_PATH = /^(\w+)\[(\d+)\]\.(\w+)$/;
 
 const DEGREE_RANK = ["专科", "本科", "硕士", "博士"];
@@ -20,6 +22,14 @@ function latestEducation(profile) {
     return DEGREE_RANK.indexOf(e.degree) > DEGREE_RANK.indexOf(best.degree) ? e : best;
   }, null);
 }
+
+const englishLevelOf = (profile) => {
+  const level = profile?.skills?.englishLevel;
+  return level && level !== "无" ? level : "";
+};
+
+const proficiencyNote = (profile) =>
+  `按英语等级 ${englishLevelOf(profile)} 推断的，请按你的实际水平确认`;
 
 /**
  * 网站问的是"最高学历""最近毕业专业"这类汇总信息时，从简历已有的经历里现算，
@@ -40,24 +50,51 @@ const DERIVED = {
   languageAbility(profile) {
     const skills = profile?.skills ?? {};
     if (skills.languageSkills) return skills.languageSkills;
-    return skills.englishLevel && skills.englishLevel !== "无" ? `英语 ${skills.englishLevel}` : "";
+    return englishLevelOf(profile) ? `英语 ${englishLevelOf(profile)}` : "";
   },
+  // 语言能力区块（语言类型 + 听说/读写能力）：信息库只有英语等级，就按英语填。
+  languageType: (profile) => (englishLevelOf(profile) ? "英语" : ""),
+  languageListenSpeak: (profile) => ENGLISH_LEVEL_PROFICIENCY[englishLevelOf(profile)]?.[0] ?? "",
+  languageReadWrite: (profile) => ENGLISH_LEVEL_PROFICIENCY[englishLevelOf(profile)]?.[1] ?? "",
 };
+
+/** 现算出来、只是"合理猜测"的项：填上后标"需确认"，这里给出原因。 */
+const DERIVED_NOTES = {
+  languageListenSpeak: proficiencyNote,
+  languageReadWrite: proficiencyNote,
+};
+
+/**
+ * 简历里没有单独存成对象数组、但页面上是"一段一段"的：获奖经历在简历里是
+ * 字符串列表，页面上每段一个"奖项名称"。按 "awards[1].name" 这样取。
+ */
+const VIRTUAL_ARRAYS = {
+  awards: (profile) => (profile?.skills?.awards ?? []).filter(Boolean).map((name) => ({ name })),
+};
+
+/** 简历里某类经历有几段（页面段数不够时按这个补齐）。 */
+export function entriesOf(profile, arrayName) {
+  if (VIRTUAL_ARRAYS[arrayName]) return VIRTUAL_ARRAYS[arrayName](profile);
+  return profile?.[arrayName] ?? [];
+}
 
 /**
  * @param {import('../../shared/schema/resume.js').ResumeProfile} profile
  * @param {string} path
- * @returns {{ value: any, missingEntry?: boolean }}
+ * @returns {{ value: any, missingEntry?: boolean, note?: string }} note：填上了也要请用户确认的原因
  */
 export function resolveResumeValue(profile, path) {
   if (path.startsWith("derived.")) {
-    const compute = DERIVED[path.slice("derived.".length)];
-    return { value: compute ? compute(profile) : undefined };
+    const name = path.slice("derived.".length);
+    const compute = DERIVED[name];
+    const value = compute ? compute(profile) : undefined;
+    const note = DERIVED_NOTES[name] && !isEmptyValue(value) ? DERIVED_NOTES[name](profile) : undefined;
+    return note ? { value, note } : { value };
   }
   const match = path.match(ARRAY_PATH);
   if (match) {
     const [, arrayName, index, key] = match;
-    const entry = profile?.[arrayName]?.[Number(index)];
+    const entry = entriesOf(profile, arrayName)[Number(index)];
     if (!entry) return { value: undefined, missingEntry: true };
     if (key === "dateRange") {
       return {

@@ -4,10 +4,22 @@
  * 打开：在 input 上依次派发 pointerdown、mousedown、focus、mouseup、click（只 click 打不开）。
  * 浮层渲染在字段内部：sd-Dropdown-container > sd-Dropdown-dropdown > sd-Select-menu
  *   > sd-Menu-content-item（文字在 .option-label 里或直接是文本）。
- * 页面结构详见 docs/platforms/moka.md。
+ * 选中后 input.value 保持为空，选中的文字在同一个 label 里的 sd-Input-display-value 里，
+ * 回读一律用 readShownText。页面结构详见 docs/platforms/moka.md。
  */
 
-import { safeClick, clickOutside, hover, isVisible, typeText, waitFor, waitForSettled } from "../dom-actions.js";
+import {
+  safeClick,
+  clickOutside,
+  hover,
+  unhover,
+  isVisible,
+  readShownText,
+  tick,
+  typeText,
+  waitFor,
+  waitForSettled,
+} from "../dom-actions.js";
 import { normalizeText, pickBestOption } from "../option-match.js";
 import { createSelectControl } from "./select.js";
 import { createDateRangeControl } from "./date-range.js";
@@ -68,26 +80,67 @@ export async function closeMokaOverlay(input, selector = DROPDOWN) {
   return !!(await waitFor(() => !findMokaOverlay(input, selector), { timeout: 2000 }));
 }
 
-/** 鼠标移到输入框上，点出现的清空按钮（×）。 */
-export async function clearMokaInput(input, { what = "输入框" } = {}) {
-  if (!input.value) return unchanged();
-  const box = inputContainerOf(input);
-  hover(box);
-  const clear = await waitFor(() => Array.from(box.querySelectorAll('[class*="clear"]')).find(isVisible), {
-    timeout: 1000,
-  });
-  if (!clear) return failed(`这个${what}没有清空按钮，没法自动清空，请手动检查`);
-  await safeClick(clear);
-  await waitFor(() => !input.value, { timeout: 1000 });
-  return input.value ? failed(`点了清空按钮但${what}里还有值`) : restored();
+const CLEAR_ICON = '[class*="clear"], [class*="Clear"], [class*="close-circle"]';
+const EMPTY_OPTION = /^(请选择|清空|清除|不选择)$/;
+
+/** 下拉里有没有"请选择/清空"这种代表"不选"的选项，有就点它。 */
+async function pickEmptyOption(input) {
+  if (!(await openMokaOverlay(input))) return;
+  const empty = menuItems(findMokaOverlay(input)).find((i) => EMPTY_OPTION.test(i.text));
+  if (empty) await safeClick(empty.el);
+  await closeMokaOverlay(input);
 }
 
-const readText = (input) => input.value.trim();
+/**
+ * 清空（撤销时把原来为空的项恢复成空）：先把鼠标移到输入框上点出现的清空按钮（×）；
+ * 没有清空按钮的下拉再看有没有"请选择"这种空选项。都没有就只能请用户自己清空。
+ * @param {{ what?: string, emptyOption?: boolean }} [options]
+ */
+export async function clearMokaInput(input, { what = "输入框", emptyOption = false } = {}) {
+  if (!readShownText(input)) return unchanged();
+  const box = inputContainerOf(input);
+  hover(box);
+  const clear = await waitFor(() => Array.from(box.querySelectorAll(CLEAR_ICON)).find(isVisible), {
+    timeout: 800,
+  });
+  if (clear) {
+    await safeClick(clear);
+    await waitFor(() => !readShownText(input), { timeout: 1000 });
+  }
+  unhover(box);
+  if (readShownText(input) && emptyOption && !input.disabled) await pickEmptyOption(input);
+  if (!readShownText(input)) return restored();
+  return failed(
+    clear
+      ? `点了清空按钮但${what}里还有值，该项需手动清空`
+      : `这个${what}没有清空按钮，插件没法自动清空，该项需手动清空`
+  );
+}
+
+const readText = readShownText;
 
 const isDisabled = (input) => input.disabled || /disabled/i.test(inputContainerOf(input)?.className ?? "");
 
-/** "年"这种输入框可以打字过滤，普通下拉是只读的。 */
+/** "年"这种输入框可以打字过滤、意向工作城市这种可以搜索，普通下拉是只读的。 */
 const isSearchable = (input) => !input.readOnly && !input.disabled;
+
+const SEARCH_TIMEOUT = 2500;
+const isLoading = (dropdown) => !!dropdown.querySelector('[class*="loading"], [class*="Loading"], [class*="spin"]');
+
+/**
+ * 打字之后等候选出来：本地过滤的（年）马上就有，远程搜索的（城市）要等一会儿，
+ * 等的时候可能先显示"搜索中"或"暂无数据"，所以一直等到有选项或超时。
+ */
+async function waitForResults(input) {
+  await tick();
+  return waitFor(
+    () => {
+      const dropdown = findMokaOverlay(input);
+      return dropdown && !isLoading(dropdown) && menuItems(dropdown).length > 0 ? dropdown : null;
+    },
+    { timeout: SEARCH_TIMEOUT }
+  );
+}
 
 function verify(input, pick, wantedText) {
   const now = readText(input);
@@ -112,7 +165,7 @@ async function choose(input, match, { wantedText, keywords = null }) {
   if (keywords?.length) {
     for (const keyword of keywords) {
       typeText(input, keyword);
-      if (!(await waitFor(() => findMokaOverlay(input), { timeout: 1000 })) && !(await openMokaOverlay(input))) continue;
+      if (!(await waitForResults(input))) continue;
       await look();
       if (pick) break;
     }
@@ -139,7 +192,7 @@ async function choose(input, match, { wantedText, keywords = null }) {
 async function restore(input, snapshot) {
   if (normalizeText(readText(input)) === normalizeText(snapshot.text)) return unchanged();
   if (!snapshot.text) {
-    const result = await clearMokaInput(input, { what: "下拉框" });
+    const result = await clearMokaInput(input, { what: "下拉框", emptyOption: true });
     await closeMokaOverlay(input);
     return result;
   }

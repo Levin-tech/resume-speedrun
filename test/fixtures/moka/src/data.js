@@ -27,7 +27,29 @@ export const HIGHEST_DEGREE_OPTIONS = toOptions(["高中", "大专", "本科", "
 
 export const DEGREE_OPTIONS = toOptions(["大专", "本科", "硕士", "博士"]);
 
-export const CITY_OPTIONS = toOptions(["北京", "上海", "广州", "深圳", "杭州", "武汉", "成都"]);
+// 意向工作城市是可搜索下拉：不输入不给选项，输入后才出联想结果。
+export const CITY_OPTIONS = toOptions([
+  "北京",
+  "上海",
+  "广州",
+  "深圳",
+  "杭州",
+  "武汉",
+  "成都",
+  "南京",
+  "苏州",
+  "西安",
+  "长沙",
+  "深州",
+]);
+
+export const COMPANY_SIZE_OPTIONS = toOptions(["少于50人", "50-150人", "150-500人", "500-1000人", "1000人以上"]);
+
+export const COMPANY_NATURE_OPTIONS = toOptions(["国企", "民营", "外资", "合资", "事业单位", "其他"]);
+
+export const LANGUAGE_OPTIONS = toOptions(["英语", "日语", "韩语", "法语", "德语", "其他"]);
+
+export const PROFICIENCY_OPTIONS = toOptions(["一般", "良好", "熟练", "精通"]);
 
 export const INDUSTRY_OPTIONS = toOptions(["互联网", "金融", "教育", "医疗健康", "制造业", "其他"]);
 
@@ -103,6 +125,9 @@ export function createWorkEntry() {
   return {
     company: "",
     title: "",
+    companySize: null,
+    companyNature: null,
+    industry: null,
     startYear: null,
     startMonth: null,
     endYear: null,
@@ -118,6 +143,7 @@ export function createInternshipEntry() {
   return {
     company: "",
     title: "",
+    industry: null,
     startYear: null,
     startMonth: null,
     endYear: null,
@@ -136,6 +162,15 @@ export function createProjectEntry() {
     endYear: null,
     endMonth: null,
     isCurrent: false,
+    duty: "",
     description: "",
   };
+}
+
+export function createAwardEntry() {
+  return { name: "" };
+}
+
+export function createLanguageEntry() {
+  return { language: null, listenSpeak: null, readWrite: null };
 }

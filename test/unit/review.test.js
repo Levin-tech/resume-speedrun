@@ -1,5 +1,11 @@
+// @vitest-environment jsdom
 import { describe, it, expect } from "vitest";
-import { summarizeFillResults, orderReviewItems, itemTitle } from "../../src/content/review/review.js";
+import {
+  summarizeFillResults,
+  orderReviewItems,
+  itemTitle,
+  renderReviewPanel,
+} from "../../src/content/review/review.js";
 
 const r = (fieldId, status, extra = {}) => ({ fieldId, status, label: fieldId, required: false, ...extra });
 
@@ -46,5 +52,34 @@ describe("itemTitle", () => {
       "实习经历 第 2 段 · 公司名称"
     );
     expect(itemTitle({ label: "姓名", repeatable: false, sectionTitle: "基本信息", sectionIndex: 0 })).toBe("姓名");
+  });
+});
+
+describe("renderReviewPanel", () => {
+  it("底部显示平台提示（Moka 草稿），撤销后还在；撤销结果里写明删了几段", () => {
+    const panel = renderReviewPanel(summarizeFillResults([r("a", "filled")]), {
+      footnote: "Moka 会自动保存草稿，撤销后如仍有残留可刷新页面检查",
+    });
+    const note = () => panel.root.querySelector('[data-role="draft-notice"]');
+    expect(note().textContent).toBe("Moka 会自动保存草稿，撤销后如仍有残留可刷新页面检查");
+    expect(note().closest("footer")).not.toBeNull();
+
+    panel.showUndoResults([
+      r("a", "restored"),
+      r("added-awards-1", "restored", { controlType: "added-entry" }),
+      r("gender", "failed", { reason: "这个下拉框没有清空按钮，插件没法自动清空，该项需手动清空" }),
+    ]);
+    const notice = panel.root.querySelector('[data-role="undo-notice"]').textContent;
+    expect(notice).toContain("1 段经历已删除");
+    expect(panel.root.querySelectorAll('[data-role="items"] li')).toHaveLength(1);
+    expect(panel.root.querySelector('[data-role="items"] li').textContent).toContain("该项需手动清空");
+    expect(note()).not.toBeNull();
+  });
+
+  it("没有平台提示时底部不多出东西；通用页面加出来但没法删的段在提示里说明", () => {
+    const panel = renderReviewPanel(summarizeFillResults([]));
+    expect(panel.root.querySelector('[data-role="draft-notice"]')).toBeNull();
+    panel.showUndoResults([], { untrackedAdded: 2 });
+    expect(panel.root.querySelector('[data-role="undo-notice"]').textContent).toContain("2 段自动添加的经历区块保留为空白");
   });
 });
